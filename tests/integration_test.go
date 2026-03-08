@@ -23,6 +23,11 @@ func TestPhase1_BasicExecution(t *testing.T) {
 		}
 		defer os.Remove("../miniDocker_test")
 	}
+
+	cmd := exec.Command("../miniDocker_test")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Error("expected error when running without arguments")
 	}
 	if !strings.Contains(string(output), "Usage") {
 		t.Error("expected usage message in output")
