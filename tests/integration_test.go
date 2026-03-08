@@ -57,13 +57,14 @@ func TestPhase1_ContainerHostname(t *testing.T) {
 
 	cmd := exec.Command("../miniDocker_test", "run", "/usr", "/bin/hostname")
 	cmd.Env = os.Environ()
-	
+
 	output, err := cmd.CombinedOutput()
 	t.Logf("Output: %s", string(output))
-	
+
 	if err != nil {
-		t.Logf("Container execution failed: %v", err)
-		return
+		// Fail the test if container execution fails
+		// This typically means namespaces aren't supported or rootfs setup is wrong
+		t.Fatalf("Container execution failed: %v\nOutput: %s", err, string(output))
 	}
 
 	if strings.TrimSpace(string(output)) != "container" {
@@ -88,7 +89,7 @@ func TestPhase1_SignalHandling(t *testing.T) {
 	defer os.Remove("../miniDocker_test")
 
 	cmd := exec.Command("../miniDocker_test", "run", "/usr", "/bin/sleep", "30")
-	
+
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start container: %v", err)
 	}
