@@ -31,6 +31,7 @@ jobs:
   integration-test:
     name: Integration Tests (with root)
     runs-on: ubuntu-latest
+    needs: test
     
     steps:
     - name: Checkout code
@@ -44,7 +45,10 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
+    - name: Build binary for integration tests
+      run: go build -v -o miniDocker_test .
+
     - name: Run integration tests
       run: |
         cd tests
-        sudo go test -v -run TestPhase1 || echo "Integration tests skipped (namespace support may be limited in CI)"
+        sudo --preserve-env=PATH $(which go) test -v -run TestPhase1 || echo "Integration tests skipped (namespace support may be limited in CI)"

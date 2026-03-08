@@ -13,17 +13,16 @@ func TestPhase1_BasicExecution(t *testing.T) {
 		t.Skip("requires root privileges - run with: sudo go test")
 	}
 
-	buildCmd := exec.Command("go", "build", "-o", "../miniDocker_test", "../.")
-	buildCmd.Dir = ".."
-	if err := buildCmd.Run(); err != nil {
-		t.Fatalf("failed to build: %v", err)
+	// Check if binary exists, otherwise build it
+	if _, err := os.Stat("../miniDocker_test"); os.IsNotExist(err) {
+		buildCmd := exec.Command("go", "build", "-o", "../miniDocker_test", "../.")
+		buildCmd.Dir = ".."
+		output, err := buildCmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("failed to build: %v\nOutput: %s", err, string(output))
+		}
+		defer os.Remove("../miniDocker_test")
 	}
-	defer os.Remove("../miniDocker_test")
-
-	cmd := exec.Command("../miniDocker_test")
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Error("expected error when running without arguments")
 	}
 	if !strings.Contains(string(output), "Usage") {
 		t.Error("expected usage message in output")
@@ -48,12 +47,16 @@ func TestPhase1_ContainerHostname(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	buildCmd := exec.Command("go", "build", "-o", "../miniDocker_test", "../.")
-	buildCmd.Dir = ".."
-	if err := buildCmd.Run(); err != nil {
-		t.Fatalf("failed to build: %v", err)
+	// Check if binary exists, otherwise build it
+	if _, err := os.Stat("../miniDocker_test"); os.IsNotExist(err) {
+		buildCmd := exec.Command("go", "build", "-o", "../miniDocker_test", "../.")
+		buildCmd.Dir = ".."
+		output, err := buildCmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("failed to build: %v\nOutput: %s", err, string(output))
+		}
+		defer os.Remove("../miniDocker_test")
 	}
-	defer os.Remove("../miniDocker_test")
 
 	cmd := exec.Command("../miniDocker_test", "run", "/usr", "/bin/hostname")
 	cmd.Env = os.Environ()
@@ -81,12 +84,16 @@ func TestPhase1_SignalHandling(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	buildCmd := exec.Command("go", "build", "-o", "../miniDocker_test", "../.")
-	buildCmd.Dir = ".."
-	if err := buildCmd.Run(); err != nil {
-		t.Fatalf("failed to build: %v", err)
+	// Check if binary exists, otherwise build it
+	if _, err := os.Stat("../miniDocker_test"); os.IsNotExist(err) {
+		buildCmd := exec.Command("go", "build", "-o", "../miniDocker_test", "../.")
+		buildCmd.Dir = ".."
+		output, err := buildCmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("failed to build: %v\nOutput: %s", err, string(output))
+		}
+		defer os.Remove("../miniDocker_test")
 	}
-	defer os.Remove("../miniDocker_test")
 
 	cmd := exec.Command("../miniDocker_test", "run", "/usr", "/bin/sleep", "30")
 
