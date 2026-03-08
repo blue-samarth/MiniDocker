@@ -1,0 +1,43 @@
+# Binaries
+miniDocker
+miniDocker_test
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Go build cache
+.cache/
+
+# Go workspace file
+go.work
+
+# Coverage files
+*.out
+coverage.txt
+*.coverprofile
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Container runtime directories
+/var/lib/miniDocker/
+
+# Temporary test files
+/tmp/rootfs/
+rootfs/
+
+# Logs
+*.log
+
+# Debug files
+__debug_bin
