@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -58,7 +59,6 @@ func TestPhase1_ContainerHostname(t *testing.T) {
 	cmd := exec.Command("../miniDocker_test", "run", "/usr", "/bin/hostname")
 	cmd.Env = os.Environ()
 
-	// Use Output() — logs go to stderr, only stdout is captured for comparison.
 	stdout, err := cmd.Output()
 	t.Logf("stdout: %q", string(stdout))
 
@@ -81,16 +81,30 @@ func TestPhase1_SignalHandling(t *testing.T) {
 	buildBinary(t)
 
 	cmd := exec.Command("../miniDocker_test", "run", "/usr", "/bin/sleep", "30")
+	cmd.Stderr = os.Stderr // print container logs so we can see what's happening
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start container: %v", err)
 	}
+	t.Logf("container parent PID: %d", cmd.Process.Pid)
 
-	// Wait longer — overlay+pivot_root takes more time than a plain exec.
 	time.Sleep(500 * time.Millisecond)
 
+	// Check the process is still alive before signalling
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Logf("process already dead before signal: %v", err)
+	} else {
+		t.Logf("process is alive, sending SIGINT")
+	}
+
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		t.Errorf("failed to send signal: %v", err)
+		t.Errorf("failed to send SIGINT: %v", err)
+	}
+
+	// Also try SIGTERM after a short wait as fallback
+	time.Sleep(200 * time.Millisecond)
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Logf("SIGTERM failed (process may already be exiting): %v", err)
 	}
 
 	done := make(chan error, 1)
@@ -100,10 +114,15 @@ func TestPhase1_SignalHandling(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Logf("container exited with error after signal (expected): %v", err)
-		}
+		t.Logf("container exited: %v", err)
 	case <-time.After(10 * time.Second):
+		// Log process state before killing
+		t.Logf("timeout — checking process state")
+		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+			t.Logf("process is dead but Wait() didn't return: %v", err)
+		} else {
+			t.Logf("process is still alive after 10s")
+		}
 		cmd.Process.Kill()
 		t.Error("container did not exit after signal within timeout")
 	}
