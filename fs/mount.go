@@ -60,10 +60,11 @@ type mountSpec struct {
 func MountEssentials() error {
 	mounts := []mountSpec{
 		{
-			source: "proc",
-			target: "/proc",
-			fstype: "proc",
-			flags:  unix.MS_NOEXEC | unix.MS_NOSUID | unix.MS_NODEV,
+			source:     "proc",
+			target:     "/proc",
+			fstype:     "proc",
+			flags:      unix.MS_NOEXEC | unix.MS_NOSUID | unix.MS_NODEV,
+			bestEffort: true, // proc may be unavailable in some environments (e.g. unprivileged user namespaces) lmfao failed in our CI :D
 		},
 		{
 			// Mount /dev as tmpfs first — subsequent entries below depend on this.
