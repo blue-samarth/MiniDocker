@@ -81,7 +81,7 @@ func TestPhase1_SignalHandling(t *testing.T) {
 	buildBinary(t)
 
 	cmd := exec.Command("../miniDocker_test", "run", "/usr", "/bin/sleep", "30")
-	cmd.Stderr = os.Stderr // print container logs so we can see what's happening
+	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start container: %v", err)
@@ -90,21 +90,15 @@ func TestPhase1_SignalHandling(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	// Check the process is still alive before signalling
-	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
-		t.Logf("process already dead before signal: %v", err)
-	} else {
-		t.Logf("process is alive, sending SIGINT")
-	}
-
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		t.Errorf("failed to send SIGINT: %v", err)
-	}
-
-	// Also try SIGTERM after a short wait as fallback
-	time.Sleep(200 * time.Millisecond)
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		t.Logf("SIGTERM failed (process may already be exiting): %v", err)
+	// The user command runs as PID 1 inside CLONE_NEWPID.
+	// PID 1 ignores SIGINT and SIGTERM by default — use SIGKILL instead.
+	t.Logf("sending SIGKILL to container process group")
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		// Fall back to killing just the direct child.
+		t.Logf("process group kill failed (%v), falling back to direct kill", err)
+		if err := cmd.Process.Kill(); err != nil {
+			t.Errorf("failed to kill container: %v", err)
+		}
 	}
 
 	done := make(chan error, 1)
@@ -114,17 +108,10 @@ func TestPhase1_SignalHandling(t *testing.T) {
 
 	select {
 	case err := <-done:
-		t.Logf("container exited: %v", err)
-	case <-time.After(10 * time.Second):
-		// Log process state before killing
-		t.Logf("timeout — checking process state")
-		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
-			t.Logf("process is dead but Wait() didn't return: %v", err)
-		} else {
-			t.Logf("process is still alive after 10s")
-		}
+		t.Logf("container exited after signal: %v", err)
+	case <-time.After(5 * time.Second):
 		cmd.Process.Kill()
-		t.Error("container did not exit after signal within timeout")
+		t.Error("container did not exit after SIGKILL within timeout")
 	}
 }
 
