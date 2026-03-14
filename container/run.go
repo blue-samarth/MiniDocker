@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -75,16 +74,15 @@ func RunContainer(args []string) error {
 		"CONTAINER_MERGED="+mergedDir,
 	)
 
-	cmd.SysProcAttr = &syscall.SysProcAttr{
+	cmd.SysProcAttr = &unix.SysProcAttr{
 		Cloneflags: unix.CLONE_NEWUTS |
 			unix.CLONE_NEWPID |
 			unix.CLONE_NEWNS |
 			unix.CLONE_NEWNET |
 			unix.CLONE_NEWIPC |
 			unix.CLONE_NEWUSER,
-		UidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
-		GidMappings: []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
-		// On many hosts writing gid_map requires setgroups to be denied first.
+		UidMappings:                []unix.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
+		GidMappings:                []unix.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
 		GidMappingsEnableSetgroups: false,
 	}
 
@@ -116,7 +114,6 @@ func RunContainer(args []string) error {
 	log.Printf("[run] starting container process")
 	if err := cmd.Start(); err != nil {
 		log.Printf("[run] failed to start container process: %v", err)
-		// Clean up signal handling on start failure
 		signal.Stop(sigCh)
 		close(sigCh)
 		<-done
@@ -126,11 +123,9 @@ func RunContainer(args []string) error {
 
 	waitErr := cmd.Wait()
 
-	// Stop notify before closing: guarantees the runtime won't send to sigCh
-	// after close, avoiding a panic on send-to-closed-channel.
 	signal.Stop(sigCh)
 	close(sigCh)
-	<-done // wait for goroutine to drain and exit
+	<-done
 
 	if waitErr != nil {
 		log.Printf("[run] container exited with error: %v", waitErr)
