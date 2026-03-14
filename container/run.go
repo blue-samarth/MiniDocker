@@ -1,5 +1,3 @@
-//go:build linux
-
 package container
 
 import (
@@ -75,8 +73,6 @@ func RunContainer(args []string) error {
 		"CONTAINER_MERGED="+mergedDir,
 	)
 
-	// unix.SysProcAttr is used for GidMappingsEnableSetgroups support,
-	// but UidMappings/GidMappings use syscall.SysProcIDMap as the element type.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: unix.CLONE_NEWUTS |
 			unix.CLONE_NEWPID |
@@ -91,6 +87,8 @@ func RunContainer(args []string) error {
 			{ContainerID: 0, HostID: os.Getgid(), Size: 1},
 		},
 		GidMappingsEnableSetgroups: false,
+		// Pdeathsig ensures the container is killed if the parent dies.
+		Pdeathsig: unix.SIGKILL,
 	}
 
 	// Set up signal forwarding BEFORE starting the container to avoid dropping signals
@@ -109,8 +107,15 @@ func RunContainer(args []string) error {
 	go func() {
 		defer close(done)
 		for sig := range sigCh {
-			if cmd.Process != nil {
-				log.Printf("[run] forwarding signal %v to container", sig)
+			if cmd.Process == nil {
+				continue
+			}
+			log.Printf("[run] forwarding signal %v to container process group", sig)
+			// Send to the negative PID to signal the entire process group,
+			// ensuring the signal reaches processes inside the PID namespace.
+			if err := unix.Kill(-cmd.Process.Pid, sig.(unix.Signal)); err != nil {
+				// Fall back to signalling just the direct child.
+				log.Printf("[run] process group signal failed, falling back: %v", err)
 				if err := cmd.Process.Signal(sig); err != nil {
 					log.Printf("[run] failed to forward signal %v: %v", sig, err)
 				}
