@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -74,15 +75,21 @@ func RunContainer(args []string) error {
 		"CONTAINER_MERGED="+mergedDir,
 	)
 
-	cmd.SysProcAttr = &unix.SysProcAttr{
+	// unix.SysProcAttr is used for GidMappingsEnableSetgroups support,
+	// but UidMappings/GidMappings use syscall.SysProcIDMap as the element type.
+	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: unix.CLONE_NEWUTS |
 			unix.CLONE_NEWPID |
 			unix.CLONE_NEWNS |
 			unix.CLONE_NEWNET |
 			unix.CLONE_NEWIPC |
 			unix.CLONE_NEWUSER,
-		UidMappings:                []unix.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
-		GidMappings:                []unix.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
+		UidMappings: []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: os.Getuid(), Size: 1},
+		},
+		GidMappings: []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: os.Getgid(), Size: 1},
+		},
 		GidMappingsEnableSetgroups: false,
 	}
 
