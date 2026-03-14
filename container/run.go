@@ -87,7 +87,10 @@ func RunContainer(args []string) error {
 			{ContainerID: 0, HostID: os.Getgid(), Size: 1},
 		},
 		GidMappingsEnableSetgroups: false,
-		// Pdeathsig ensures the container is killed if the parent dies.
+		// Put the child in its own process group so Kill(-pid) reaches
+		// all processes in the container, not just the direct child.
+		Setpgid: true,
+		// Kill container if parent dies unexpectedly.
 		Pdeathsig: unix.SIGKILL,
 	}
 
@@ -111,10 +114,8 @@ func RunContainer(args []string) error {
 				continue
 			}
 			log.Printf("[run] forwarding signal %v to container process group", sig)
-			// Send to the negative PID to signal the entire process group,
-			// ensuring the signal reaches processes inside the PID namespace.
+			// Kill(-pid) sends to the entire process group.
 			if err := unix.Kill(-cmd.Process.Pid, sig.(unix.Signal)); err != nil {
-				// Fall back to signalling just the direct child.
 				log.Printf("[run] process group signal failed, falling back: %v", err)
 				if err := cmd.Process.Signal(sig); err != nil {
 					log.Printf("[run] failed to forward signal %v: %v", sig, err)
