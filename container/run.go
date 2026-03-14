@@ -87,8 +87,7 @@ func RunContainer(args []string) error {
 			{ContainerID: 0, HostID: os.Getgid(), Size: 1},
 		},
 		GidMappingsEnableSetgroups: false,
-		// Put the child in its own process group so Kill(-pid) reaches
-		// all processes in the container, not just the direct child.
+		// Setpgid puts the child in its own process group (PGID = child PID).
 		Setpgid: true,
 		// Kill container if parent dies unexpectedly.
 		Pdeathsig: unix.SIGKILL,
@@ -113,10 +112,11 @@ func RunContainer(args []string) error {
 			if cmd.Process == nil {
 				continue
 			}
-			log.Printf("[run] forwarding signal %v to container process group", sig)
-			// Kill(-pid) sends to the entire process group.
+			log.Printf("[run] forwarding signal %v to container", sig)
+			// With Setpgid=true the child's PGID == child's PID,
+			// so Kill(-childPID) signals the entire container process group.
 			if err := unix.Kill(-cmd.Process.Pid, sig.(unix.Signal)); err != nil {
-				log.Printf("[run] process group signal failed, falling back: %v", err)
+				log.Printf("[run] process group signal failed, falling back to direct: %v", err)
 				if err := cmd.Process.Signal(sig); err != nil {
 					log.Printf("[run] failed to forward signal %v: %v", sig, err)
 				}
