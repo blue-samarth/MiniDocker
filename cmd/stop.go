@@ -51,16 +51,18 @@ func stopOne(lm *state.LifecycleManager, id string, timeoutSecs int, force bool)
 		return fmt.Errorf("container %s is not running (status: %s)", truncateID(id, 12), cs.Status)
 	}
 
-	pid := cs.Pid
-	if pid <= 0 {
-		return fmt.Errorf("container %s has no valid PID", truncateID(id, 12))
+	// cs.Pid is the host-side PID of the miniDocker run process, not the container's PID 1.
+	// Signaling this PID is correct: it terminates the parent, which triggers cleanup.
+	parentRunPID := cs.Pid
+	if parentRunPID <= 0 {
+		return fmt.Errorf("container %s has no valid parent process PID", truncateID(id, 12))
 	}
 
 	short := truncateID(id, 12)
 
 	if force {
 		fmt.Printf("Force-stopping %s... ", short)
-		if err := unix.Kill(pid, unix.SIGKILL); err != nil && err != unix.ESRCH {
+		if err := unix.Kill(parentRunPID, unix.SIGKILL); err != nil && err != unix.ESRCH {
 			fmt.Println("FAILED")
 			return fmt.Errorf("SIGKILL failed: %w", err)
 		}
@@ -70,7 +72,7 @@ func stopOne(lm *state.LifecycleManager, id string, timeoutSecs int, force bool)
 
 	fmt.Printf("Stopping %s... ", short)
 
-	if err := unix.Kill(pid, unix.SIGTERM); err != nil {
+	if err := unix.Kill(parentRunPID, unix.SIGTERM); err != nil {
 		if err == unix.ESRCH {
 			fmt.Println("(already exited)")
 			return nil
@@ -82,7 +84,7 @@ func stopOne(lm *state.LifecycleManager, id string, timeoutSecs int, force bool)
 	deadline := time.Now().Add(time.Duration(timeoutSecs) * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(200 * time.Millisecond)
-		if err := unix.Kill(pid, 0); err == unix.ESRCH {
+		if err := unix.Kill(parentRunPID, 0); err == unix.ESRCH {
 			fmt.Println("OK")
 			return nil
 		}
@@ -90,7 +92,7 @@ func stopOne(lm *state.LifecycleManager, id string, timeoutSecs int, force bool)
 
 	// Grace period elapsed — escalate to SIGKILL.
 	fmt.Print("(timeout, sending SIGKILL)... ")
-	if err := unix.Kill(pid, unix.SIGKILL); err != nil && err != unix.ESRCH {
+	if err := unix.Kill(parentRunPID, unix.SIGKILL); err != nil && err != unix.ESRCH {
 		fmt.Println("FAILED")
 		return fmt.Errorf("SIGKILL failed: %w", err)
 	}
@@ -98,7 +100,7 @@ func stopOne(lm *state.LifecycleManager, id string, timeoutSecs int, force bool)
 	killDeadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(killDeadline) {
 		time.Sleep(100 * time.Millisecond)
-		if err := unix.Kill(pid, 0); err == unix.ESRCH {
+		if err := unix.Kill(parentRunPID, 0); err == unix.ESRCH {
 			break
 		}
 	}

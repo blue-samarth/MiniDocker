@@ -3,6 +3,7 @@ package fs
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/sys/unix"
 )
@@ -12,7 +13,7 @@ func PivotRoot(newRoot string) error {
 		return fmt.Errorf("new root path required")
 	}
 
-	putOld := "/put_old" // absolute inside new root after pivot
+	putOld := filepath.Join(newRoot, "put_old") // inside newRoot, before pivot
 
 	// Bind-mount newRoot onto itself (required before pivot)
 	if err := unix.Mount(newRoot, newRoot, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {

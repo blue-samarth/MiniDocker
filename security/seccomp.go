@@ -14,7 +14,9 @@ var allowedSyscalls = []uint32{
 	unix.SYS_STAT, unix.SYS_FSTAT, unix.SYS_LSTAT, unix.SYS_POLL, unix.SYS_LSEEK,
 	unix.SYS_MMAP, unix.SYS_MPROTECT, unix.SYS_MUNMAP, unix.SYS_BRK,
 	unix.SYS_RT_SIGACTION, unix.SYS_RT_SIGPROCMASK, unix.SYS_RT_SIGRETURN,
-	unix.SYS_IOCTL, unix.SYS_PREAD64, unix.SYS_PWRITE64, unix.SYS_READV,
+	// SYS_IOCTL removed: no argument filtering, significant attack surface for container escapes
+	// unix.SYS_IOCTL,
+	unix.SYS_PREAD64, unix.SYS_PWRITE64, unix.SYS_READV,
 	unix.SYS_WRITEV, unix.SYS_ACCESS, unix.SYS_PIPE, unix.SYS_SELECT,
 	unix.SYS_SCHED_YIELD, unix.SYS_MREMAP, unix.SYS_MSYNC, unix.SYS_MINCORE,
 	unix.SYS_MADVISE, unix.SYS_DUP, unix.SYS_DUP2, unix.SYS_PAUSE,

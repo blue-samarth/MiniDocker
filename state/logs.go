@@ -164,5 +164,5 @@ func tailLines(data []byte, n int) []byte {
 			}
 		}
 	}
-	return data[:end+1]
+	return data[:end]
 }

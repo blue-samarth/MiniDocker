@@ -20,8 +20,6 @@ import (
 
 const containersBaseDir = "/var/lib/miniDocker/containers"
 
-var ipam = network.NewIPAM(network.Subnet)
-
 func generateContainerID() (string, error) {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
@@ -72,6 +70,7 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 
 	_ = network.CreateBridge() // idempotent, ignore error
 
+	ipam := network.NewIPAM(network.Subnet) // fresh instance per run to avoid stale state
 	ip, err := ipam.Allocate(containerID)
 	if err != nil {
 		_ = lm.MarkError(containerID, err.Error())
