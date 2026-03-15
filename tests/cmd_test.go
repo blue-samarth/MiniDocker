@@ -225,8 +225,9 @@ func TestStop_NoID(t *testing.T) {
 }
 
 func TestStop_NotRunning(t *testing.T) {
-	// State manager points at /var/run/miniDocker which may not exist — that's fine;
-	// the error we care about is "not running", not "state dir missing".
+	if os.Getuid() != 0 {
+		t.Skip("requires root (state dir /var/run/miniDocker)")
+	}
 	err := cmd.Stop([]string{"notarealcontainer0000"})
 	t.Logf("Stop non-existent: %v", err)
 }
