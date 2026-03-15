@@ -12,8 +12,8 @@ import (
 // They are skipped in non-root environments
 
 func TestBridge_Constants(t *testing.T) {
-	if network.BridgeName != "miniDocker0" {
-		t.Errorf("expected bridge name miniDocker0, got %s", network.BridgeName)
+	if network.BridgeName != "miniBridge0" {
+		t.Errorf("expected bridge name miniBridge0, got %s", network.BridgeName)
 	}
 	if network.BridgeCIDR != "172.20.0.1/16" {
 		t.Errorf("expected bridge CIDR 172.20.0.1/16, got %s", network.BridgeCIDR)
