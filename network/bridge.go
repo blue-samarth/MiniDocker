@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	BridgeName = "miniDocker0"
+	BridgeName = "miniBridge0"
 	BridgeCIDR = "172.20.0.1/16"
 )
 

@@ -538,8 +538,13 @@ func TestPhase7_BinaryLogs(t *testing.T) {
 
 // BenchmarkContainerCreate benchmarks container creation performance
 func BenchmarkContainerCreate(b *testing.B) {
-	t := testing.T{}
-	lm := newLM(&t)
+	// Use b.TempDir() instead of t.TempDir() to avoid cleanup leak
+	dir := b.TempDir()
+	sm, err := state.NewStateManagerWithDir(dir)
+	if err != nil {
+		b.Fatalf("state manager: %v", err)
+	}
+	lm := state.NewLifecycleManager(sm)
 	cfg := &state.ContainerConfig{
 		Image:   "/img",
 		Command: []string{"/bin/sh"},
@@ -554,8 +559,12 @@ func BenchmarkContainerCreate(b *testing.B) {
 
 // BenchmarkStateTransitions benchmarks state machine transitions
 func BenchmarkStateTransitions(b *testing.B) {
-	t := testing.T{}
-	lm := newLM(&t)
+	dir := b.TempDir()
+	sm, err := state.NewStateManagerWithDir(dir)
+	if err != nil {
+		b.Fatalf("state manager: %v", err)
+	}
+	lm := state.NewLifecycleManager(sm)
 	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
 
 	b.ResetTimer()
@@ -569,8 +578,12 @@ func BenchmarkStateTransitions(b *testing.B) {
 
 // BenchmarkContainerListing benchmarks container enumeration
 func BenchmarkContainerListing(b *testing.B) {
-	t := testing.T{}
-	lm := newLM(&t)
+	dir := b.TempDir()
+	sm, err := state.NewStateManagerWithDir(dir)
+	if err != nil {
+		b.Fatalf("state manager: %v", err)
+	}
+	lm := state.NewLifecycleManager(sm)
 	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
 
 	// Create 100 containers
@@ -618,8 +631,12 @@ func BenchmarkLogRead(b *testing.B) {
 
 // BenchmarkConcurrentReads benchmarks concurrent state access
 func BenchmarkConcurrentReads(b *testing.B) {
-	t := testing.T{}
-	lm := newLM(&t)
+	dir := b.TempDir()
+	sm, err := state.NewStateManagerWithDir(dir)
+	if err != nil {
+		b.Fatalf("state manager: %v", err)
+	}
+	lm := state.NewLifecycleManager(sm)
 	id := "bench-concurrent"
 	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
 	lm.InitContainer(id, cfg)

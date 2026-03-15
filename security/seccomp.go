@@ -50,7 +50,9 @@ var allowedSyscalls = []uint32{
 	unix.SYS_SCHED_GET_PRIORITY_MAX, unix.SYS_SCHED_GET_PRIORITY_MIN,
 	unix.SYS_SCHED_RR_GET_INTERVAL, unix.SYS_MLOCK, unix.SYS_MUNLOCK,
 	unix.SYS_MLOCKALL, unix.SYS_MUNLOCKALL, unix.SYS_VHANGUP,
-	unix.SYS_PRCTL, unix.SYS_ARCH_PRCTL, unix.SYS_SETRLIMIT,
+	// SYS_PRCTL removed: container can install nested seccomp filter to whitelist blocked syscalls
+	// unix.SYS_PRCTL,
+	unix.SYS_ARCH_PRCTL, unix.SYS_SETRLIMIT,
 	unix.SYS_SYNC, unix.SYS_ACCT, unix.SYS_SETTIMEOFDAY, unix.SYS_CHROOT,
 	unix.SYS_SYNC_FILE_RANGE, unix.SYS_GETTID, unix.SYS_FUTEX,
 	unix.SYS_SCHED_SETAFFINITY, unix.SYS_SCHED_GETAFFINITY,
@@ -82,7 +84,9 @@ var allowedSyscalls = []uint32{
 	unix.SYS_SENDMMSG, unix.SYS_GETCPU, unix.SYS_GETRANDOM,
 	unix.SYS_MEMFD_CREATE, unix.SYS_EXECVEAT, unix.SYS_COPY_FILE_RANGE,
 	unix.SYS_PREADV2, unix.SYS_PWRITEV2, unix.SYS_STATX,
-	unix.SYS_PIDFD_OPEN, unix.SYS_CLONE3, unix.SYS_CLOSE_RANGE,
+	// SYS_CLONE3 removed: without argument filtering, can enable features container shouldn't use
+	// unix.SYS_CLONE3,
+	unix.SYS_PIDFD_OPEN, unix.SYS_CLOSE_RANGE,
 	unix.SYS_OPENAT2, unix.SYS_FACCESSAT2,
 }
 
