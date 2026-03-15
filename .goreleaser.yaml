@@ -28,7 +28,6 @@ builds:
 archives:
   - id: miniDocker
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
     files:
       - README.md
       - LICENSE
@@ -63,7 +62,7 @@ changelog:
 
 release:
   github:
-    owner: YOUR_GITHUB_USERNAME   # replace this
+    owner: blue-samarth   # replace this
     name: miniDocker
   name_template: "{{.ProjectName}} {{.Tag}}"
   header: |
@@ -72,15 +71,14 @@ release:
     Linux-only container runtime. Requires root and cgroups v2.
 
     ### Installation
-```bash
-    # Download and install (linux/amd64)
-    curl -L https://github.com/YOUR_GITHUB_USERNAME/miniDocker/releases/download/{{.Tag}}/miniDocker_{{.Version}}_linux_amd64.tar.gz | tar xz
+
+    Download and install (linux/amd64):
+    curl -L https://github.com/blue-samarth/miniDocker/releases/download/{{.Tag}}/miniDocker_{{.Version}}_linux_amd64.tar.gz | tar xz
     sudo mv miniDocker /usr/local/bin/
     sudo chmod +x /usr/local/bin/miniDocker
-```
 
-    Verify with `sha256sum` against `checksums.txt`.
+    Verify with sha256sum against checksums.txt.
   footer: |
     **Requirements:** Linux kernel 5.13+, cgroups v2, root privileges.
   draft: false
-  prerelease: auto   # tags like v1.0.0-rc1 are marked pre-release automatically
+  prerelease: auto
