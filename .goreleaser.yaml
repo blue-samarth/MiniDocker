@@ -1,0 +1,86 @@
+version: 2
+
+project_name: miniDocker
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: miniDocker
+    binary: miniDocker
+    main: .
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.ShortCommit}}
+      - -X main.Date={{.Date}}
+      - -X main.BuiltBy=goreleaser
+
+archives:
+  - id: miniDocker
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: 'New Features'
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: 'Bug Fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: 'Security'
+      regexp: '^.*?sec(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: 'Other'
+      order: 999
+
+release:
+  github:
+    owner: YOUR_GITHUB_USERNAME   # replace this
+    name: miniDocker
+  name_template: "{{.ProjectName}} {{.Tag}}"
+  header: |
+    ## miniDocker {{.Tag}}
+
+    Linux-only container runtime. Requires root and cgroups v2.
+
+    ### Installation
+```bash
+    # Download and install (linux/amd64)
+    curl -L https://github.com/YOUR_GITHUB_USERNAME/miniDocker/releases/download/{{.Tag}}/miniDocker_{{.Version}}_linux_amd64.tar.gz | tar xz
+    sudo mv miniDocker /usr/local/bin/
+    sudo chmod +x /usr/local/bin/miniDocker
+```
+
+    Verify with `sha256sum` against `checksums.txt`.
+  footer: |
+    **Requirements:** Linux kernel 5.13+, cgroups v2, root privileges.
+  draft: false
+  prerelease: auto   # tags like v1.0.0-rc1 are marked pre-release automatically
