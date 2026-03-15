@@ -23,7 +23,7 @@ jobs:
       run: go mod download
 
     - name: Run unit tests with coverage
-      run: go test -v -short -coverprofile=coverage.out ./...
+      run: go test -v -coverprofile=coverage.out ./...
 
     - name: Display coverage report
       if: hashFiles('coverage.out') != ''
