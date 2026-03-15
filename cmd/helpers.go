@@ -130,3 +130,12 @@ func roundFloat(f float64, d int) float64 {
 	pow := math.Pow(10, float64(d))
 	return math.Round(f*pow) / pow
 }
+
+// Exported wrappers so package tests can access unexported helpers.
+func TruncateID(id string, n int) string         { return truncateID(id, n) }
+func TruncateStr(s string, max int) string       { return truncateStr(s, max) }
+func FormatBytes(b int64) string                 { return formatBytes(b) }
+func FormatDuration(d time.Duration) string      { return formatDuration(d) }
+func FormatPercent(n, d float64) string          { return formatPercent(n, d) }
+func PadRight(s string, w int) string            { return padRight(s, w) }
+func ReadCgroupFile(p, f string) (string, error) { return readCgroupFile(p, f) }

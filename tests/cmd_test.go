@@ -50,19 +50,19 @@ func seedContainer(t *testing.T, lm *state.LifecycleManager, id string, status s
 // ── cmd/helpers unit tests ────────────────────────────────────────────────────
 
 func TestHelpers_TruncateID(t *testing.T) {
-	if got := truncateID("abcdef123456789", 12); got != "abcdef123456" {
+	if got := cmd.TruncateID("abcdef123456789", 12); got != "abcdef123456" {
 		t.Errorf("got %q", got)
 	}
-	if got := truncateID("short", 12); got != "short" {
+	if got := cmd.TruncateID("short", 12); got != "short" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestHelpers_TruncateStr(t *testing.T) {
-	if got := truncateStr("hello world", 8); got != "hello..." {
+	if got := cmd.TruncateStr("hello world", 8); got != "hello..." {
 		t.Errorf("got %q", got)
 	}
-	if got := truncateStr("hi", 8); got != "hi" {
+	if got := cmd.TruncateStr("hi", 8); got != "hi" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -80,7 +80,7 @@ func TestHelpers_FormatBytes(t *testing.T) {
 		{-1, "-"},
 	}
 	for _, c := range cases {
-		if got := formatBytes(c.in); got != c.want {
+		if got := cmd.FormatBytes(c.in); got != c.want {
 			t.Errorf("formatBytes(%d) = %q, want %q", c.in, got, c.want)
 		}
 	}
@@ -97,32 +97,32 @@ func TestHelpers_FormatDuration(t *testing.T) {
 		{48 * time.Hour, "2d0h"},
 	}
 	for _, c := range cases {
-		if got := formatDuration(c.d); got != c.want {
+		if got := cmd.FormatDuration(c.d); got != c.want {
 			t.Errorf("formatDuration(%v) = %q, want %q", c.d, got, c.want)
 		}
 	}
 }
 
 func TestHelpers_FormatPercent(t *testing.T) {
-	if got := formatPercent(25, 100); got != "25.00%" {
+	if got := cmd.FormatPercent(25, 100); got != "25.00%" {
 		t.Errorf("got %q", got)
 	}
-	if got := formatPercent(0, 0); got != "0.00%" {
+	if got := cmd.FormatPercent(0, 0); got != "0.00%" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestHelpers_PadRight(t *testing.T) {
-	if got := padRight("hi", 6); got != "hi    " {
+	if got := cmd.PadRight("hi", 6); got != "hi    " {
 		t.Errorf("got %q", got)
 	}
-	if got := padRight("toolong", 3); got != "toolong" {
+	if got := cmd.PadRight("toolong", 3); got != "toolong" {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestHelpers_ReadCgroupFile_Missing(t *testing.T) {
-	v, err := readCgroupFile("/nonexistent/path", "memory.current")
+	v, err := cmd.ReadCgroupFile("/nonexistent/path", "memory.current")
 	if err != nil {
 		t.Errorf("expected nil error, got %v", err)
 	}
@@ -136,7 +136,7 @@ func TestHelpers_ReadCgroupFile_Present(t *testing.T) {
 	if err := os.WriteFile(dir+"/memory.current", []byte("67108864\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	v, err := readCgroupFile(dir, "memory.current")
+	v, err := cmd.ReadCgroupFile(dir, "memory.current")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
