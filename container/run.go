@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"miniDocker/cgroups"
 
@@ -89,9 +90,9 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 		"CONTAINER_MERGED="+mergedDir,
 	)
 
-	// unix.SysProcAttr provides namespace flags and UID/GID mappings.
-	// unix.CLONE_NEW* constants are used for namespace creation.
-	// UidMappings and GidMappings are required for proper user namespace isolation.
+	// unix.SysProcAttr is used for GidMappingsEnableSetgroups support.
+	// UidMappings/GidMappings fields on unix.SysProcAttr take []syscall.SysProcIDMap —
+	// the two packages are designed to interoperate this way.
 	cmd.SysProcAttr = &unix.SysProcAttr{
 		Cloneflags: unix.CLONE_NEWUTS |
 			unix.CLONE_NEWPID |
@@ -99,19 +100,17 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 			unix.CLONE_NEWNET |
 			unix.CLONE_NEWIPC |
 			unix.CLONE_NEWUSER,
-		UidMappings: []unix.SysProcIDMap{
+		UidMappings: []syscall.SysProcIDMap{
 			{ContainerID: 0, HostID: os.Getuid(), Size: 1},
 		},
-		GidMappings: []unix.SysProcIDMap{
+		GidMappings: []syscall.SysProcIDMap{
 			{ContainerID: 0, HostID: os.Getgid(), Size: 1},
 		},
 		GidMappingsEnableSetgroups: false,
 		Setpgid:                    true,
 	}
 
-	// Set up signal forwarding BEFORE starting the container.
-	// unix.SIGINT etc are used here as they satisfy os.Signal and
-	// can be type-asserted to unix.Signal for unix.Kill.
+	// Set up signal forwarding BEFORE starting the container
 	sigCh := make(chan os.Signal, 8)
 	signal.Notify(sigCh,
 		unix.SIGINT,
@@ -131,8 +130,6 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 				continue
 			}
 			log.Printf("[run] forwarding signal %v to container", sig)
-			// With Setpgid=true the child's PGID == child's PID.
-			// unix.Kill is used as it accepts unix.Signal type directly.
 			if err := unix.Kill(-cmd.Process.Pid, sig.(unix.Signal)); err != nil {
 				log.Printf("[run] process group signal failed, falling back: %v", err)
 				if err := cmd.Process.Signal(sig); err != nil {
