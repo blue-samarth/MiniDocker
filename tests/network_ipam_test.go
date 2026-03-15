@@ -207,36 +207,37 @@ func TestIPAM_InvalidSubnet(t *testing.T) {
 }
 
 func TestIPAM_SubnetExhaustion(t *testing.T) {
-	// /30 has 4 IPs: .0 (network), .1 (gateway), .2, .3 — only .2 and .3 usable
-	ipam := newTestIPAM(t, "172.20.0.0/30")
+	// /29 has 8 IPs: .0 (network), .1 (gateway), .2-.6 (usable), .7 (broadcast)
+	// Usable IPs: 172.20.0.2, .3, .4, .5, .6 = 5 total
+	ipam := newTestIPAM(t, "172.20.0.0/29")
 
-	ip1, err := ipam.Allocate("container-1")
-	if err != nil {
-		t.Fatalf("first allocation failed: %v", err)
+	var allocatedIPs []string
+	for i := 0; i < 5; i++ {
+		ip, err := ipam.Allocate("container-" + string(rune('a'+i)))
+		if err != nil {
+			t.Fatalf("allocation %d failed: %v", i, err)
+		}
+		allocatedIPs = append(allocatedIPs, ip)
 	}
 
-	_, err = ipam.Allocate("container-2")
-	if err != nil {
-		t.Fatalf("second allocation failed: %v", err)
-	}
-
-	// Third allocation should fail
-	_, err = ipam.Allocate("container-3")
+	// Sixth allocation should fail — subnet exhausted
+	_, err := ipam.Allocate("container-f")
 	if err == nil {
 		t.Error("expected error when subnet exhausted")
 	}
 
-	// After releasing one, should succeed
-	if err := ipam.Release(ip1); err != nil {
+	// Release one and verify it can be reallocated
+	released := allocatedIPs[0]
+	if err := ipam.Release(released); err != nil {
 		t.Fatalf("release failed: %v", err)
 	}
 
-	ip3, err := ipam.Allocate("container-3")
+	reused, err := ipam.Allocate("container-g")
 	if err != nil {
 		t.Fatalf("allocation after release failed: %v", err)
 	}
-	if ip3 != ip1 {
-		t.Errorf("expected to reuse released IP %s, got %s", ip1, ip3)
+	if reused != released {
+		t.Errorf("expected to reuse released IP %s, got %s", released, reused)
 	}
 }
 
@@ -279,7 +280,7 @@ func TestIPAM_ConcurrentAllocation(t *testing.T) {
 	}
 }
 
-// Keep the root-only test as a separate explicit skip
+// Root-only test for persistence to the actual /var/run path
 func TestIPAM_RootOnlyPersistence(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("requires root privileges - run with: sudo go test")
