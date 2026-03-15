@@ -89,8 +89,8 @@ func TestStateManager_UpdateStatus_InvalidTransition(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for invalid transition created→exited")
 	}
-	if !strings.Contains(err.Error(), "invalid state transition") {
-		t.Errorf("expected invalid state transition error, got: %v", err)
+	if !strings.Contains(err.Error(), "invalid transition") {
+		t.Errorf("expected invalid transition error, got: %v", err)
 	}
 }
 
