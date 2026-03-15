@@ -77,6 +77,24 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
+    - name: Configure sudo for passwordless execution
+      run: |
+        echo "Configuring sudo for passwordless root access..."
+        sudo usermod -aG sudo $USER
+        echo "$USER ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers.d/$USER
+        sudo chmod 0440 /etc/sudoers.d/$USER
+        sudo -n true && echo " Passwordless sudo configured" || echo "  Passwordless sudo may not be available"
+
+    - name: Verify root capabilities
+      run: |
+        echo "=== Checking Linux capabilities ==="
+        id
+        sudo id
+        echo ""
+        echo "=== Checking namespace support ==="
+        sudo ip netns list 2>/dev/null || echo "  Network namespaces may not be available"
+        sudo cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || echo "  Unprivileged user namespaces may not be available"
+
     - name: Build binary for integration tests
       run: go build -v -o miniDocker_test .
 
