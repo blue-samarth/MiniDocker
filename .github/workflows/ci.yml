@@ -23,7 +23,7 @@ jobs:
       run: go mod download
 
     - name: Run unit tests with coverage
-      run: go test -v -short -coverprofile=coverage.out -covermode=atomic ./...
+      run: go test -v -short -coverprofile=coverage.out ./...
 
     - name: Display coverage report
       run: |
@@ -75,7 +75,7 @@ jobs:
     - name: Run integration tests with coverage
       run: |
         cd tests
-        sudo --preserve-env=PATH $(which go) test -v -coverprofile=integration-coverage.out -covermode=atomic . || echo "Integration tests completed"
+        sudo --preserve-env=PATH $(which go) test -v -coverprofile=integration-coverage.out . || echo "Integration tests completed"
 
     - name: Run benchmarks (if root available)
       run: |
