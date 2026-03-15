@@ -538,7 +538,8 @@ func TestPhase7_BinaryLogs(t *testing.T) {
 
 // BenchmarkContainerCreate benchmarks container creation performance
 func BenchmarkContainerCreate(b *testing.B) {
-	lm := newLM(&testing.T{})
+	t := testing.T{}
+	lm := newLM(&t)
 	cfg := &state.ContainerConfig{
 		Image:   "/img",
 		Command: []string{"/bin/sh"},
@@ -553,7 +554,8 @@ func BenchmarkContainerCreate(b *testing.B) {
 
 // BenchmarkStateTransitions benchmarks state machine transitions
 func BenchmarkStateTransitions(b *testing.B) {
-	lm := newLM(&testing.T{})
+	t := testing.T{}
+	lm := newLM(&t)
 	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
 
 	b.ResetTimer()
@@ -567,7 +569,8 @@ func BenchmarkStateTransitions(b *testing.B) {
 
 // BenchmarkContainerListing benchmarks container enumeration
 func BenchmarkContainerListing(b *testing.B) {
-	lm := newLM(&testing.T{})
+	t := testing.T{}
+	lm := newLM(&t)
 	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
 
 	// Create 100 containers
@@ -615,7 +618,8 @@ func BenchmarkLogRead(b *testing.B) {
 
 // BenchmarkConcurrentReads benchmarks concurrent state access
 func BenchmarkConcurrentReads(b *testing.B) {
-	lm := newLM(&testing.T{})
+	t := testing.T{}
+	lm := newLM(&t)
 	id := "bench-concurrent"
 	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
 	lm.InitContainer(id, cfg)
