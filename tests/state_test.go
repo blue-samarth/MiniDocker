@@ -607,7 +607,9 @@ func TestComprehensive_ErrorTransitions(t *testing.T) {
 
 	// Create container
 	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
-	lm.InitContainer(id, cfg)
+	if err := lm.InitContainer(id, cfg); err != nil {
+		t.Fatalf("InitContainer failed: %v", err)
+	}
 
 	// Try to exit without running
 	if err := lm.MarkExited(id, 0); err == nil {
@@ -615,9 +617,11 @@ func TestComprehensive_ErrorTransitions(t *testing.T) {
 	}
 
 	// Mark as running
-	lm.MarkRunning(id, 1234)
+	if err := lm.MarkRunning(id, 1234); err != nil {
+		t.Fatalf("MarkRunning failed: %v", err)
+	}
 
-	// Try to init again
+	// Try to init again - should fail because container exists
 	if err := lm.InitContainer(id, cfg); err == nil {
 		t.Error("Expected error re-initializing running container")
 	}

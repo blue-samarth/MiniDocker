@@ -21,12 +21,12 @@ func NewLifecycleManager(sm *StateManager) *LifecycleManager {
 // Called from container/run.go after generating the container ID.
 // Returns error if container already exists.
 func (lm *LifecycleManager) InitContainer(id string, cfg *ContainerConfig) error {
-	log.Printf("[lifecycle] initialising container %s", id)
-
-	// Check if container already exists
+	// Check if container already exists BEFORE logging
 	if _, err := lm.sm.GetState(id); err == nil {
 		return fmt.Errorf("container %s already exists", id)
 	}
+
+	log.Printf("[lifecycle] initialising container %s", id)
 
 	if err := lm.sm.CreateContainer(id, cfg); err != nil {
 		return fmt.Errorf("failed to create container state: %w", err)
