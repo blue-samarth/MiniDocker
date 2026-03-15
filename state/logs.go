@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 const (
@@ -107,18 +108,13 @@ func (lm *LogManager) RotateLogs() error {
 }
 
 func (lm *LogManager) Close() error {
-	var firstErr error
 	if lm.stdoutFile != nil {
-		if err := lm.stdoutFile.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
+		_ = lm.stdoutFile.Close()
 	}
 	if lm.stderrFile != nil {
-		if err := lm.stderrFile.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
+		_ = lm.stderrFile.Close()
 	}
-	return firstErr
+	return nil
 }
 
 func readTail(path string, n int) ([]byte, error) {
@@ -136,11 +132,11 @@ func readTail(path string, n int) ([]byte, error) {
 }
 
 func rotate(path string) error {
-	_ = os.Remove(path + "." + string(maxRotations))
+	_ = os.Remove(path + "." + strconv.Itoa(maxRotations))
 
 	for i := maxRotations - 1; i >= 1; i-- {
-		src := path + "." + string(i)
-		dst := path + "." + string(i+1)
+		src := path + "." + strconv.Itoa(i)
+		dst := path + "." + strconv.Itoa(i+1)
 		if _, err := os.Stat(src); err == nil {
 			_ = os.Rename(src, dst)
 		}
