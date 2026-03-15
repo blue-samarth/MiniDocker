@@ -253,14 +253,14 @@ var allowedSyscalls = []uint32{
 
 // BPF instruction opcodes
 const (
-	bpfLD  = 0x00
-	bpfJMP = 0x05
-	bpfRET = 0x06
-	bpfW   = 0x00 // word (32-bit)
-	bpfABS = 0x20
-	bpfJEQ = 0x10
-	bpfK   = 0x00
-	bpfJGE = 0x30
+	bpfLD    = 0x00
+	bpfJMP   = 0x05
+	bpfRET   = 0x06
+	bpfW     = 0x00 // word (32-bit)
+	bpfABS   = 0x20
+	bpfJEQ   = 0x10
+	bpfK     = 0x00
+	bpfJGE   = 0x30
 
 	syscallNr = 0 // offset of syscall number in seccomp_data
 )
@@ -287,8 +287,8 @@ func ApplySeccompFilter() error {
 		bpfStmt(bpfLD|bpfW|bpfABS, seccompDataOffArch),
 		// If arch != AUDIT_ARCH_X86_64, kill process
 		bpfJump(bpfJMP|bpfJEQ|bpfK, unix.AUDIT_ARCH_X86_64,
-			1, // true: skip kill
-			0, // false: fall through to kill
+			1,   // true: skip kill
+			0,   // false: fall through to kill
 		),
 		bpfStmt(bpfRET|bpfK, unix.SECCOMP_RET_KILL_PROCESS),
 	)
@@ -309,7 +309,7 @@ func ApplySeccompFilter() error {
 
 	// 4. Default: return EPERM for anything not whitelisted
 	filter = append(filter,
-		bpfStmt(bpfRET|bpfK, unix.SECCOMP_RET_ERRNO|(unix.EPERM&unix.SECCOMP_RET_DATA)),
+		bpfStmt(bpfRET|bpfK, unix.SECCOMP_RET_ERRNO|(uint32(unix.EPERM)&unix.SECCOMP_RET_DATA)),
 	)
 
 	prog := unix.SockFprog{
