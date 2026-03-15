@@ -13,6 +13,7 @@ import (
 
 	"miniDocker/cgroups"
 	"miniDocker/network"
+	"miniDocker/state"
 
 	"golang.org/x/sys/unix"
 )
@@ -36,12 +37,29 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 	}
 
 	imagePath := args[0]
+	containerCmd := args[1:]
 	log.Printf("[run] image path: %q", imagePath)
-	log.Printf("[run] container command: %v", args[1:])
+	log.Printf("[run] container command: %v", containerCmd)
 
 	containerID, err := generateContainerID()
 	if err != nil {
 		return err
+	}
+
+	// Initialise state manager and lifecycle manager
+	sm, err := state.NewStateManager()
+	if err != nil {
+		log.Printf("[run] warning: failed to init state manager: %v", err)
+	}
+	var lm *state.LifecycleManager
+	if sm != nil {
+		lm = state.NewLifecycleManager(sm)
+		if err := lm.InitContainer(containerID, &state.ContainerConfig{
+			Image:   imagePath,
+			Command: containerCmd,
+		}); err != nil {
+			log.Printf("[run] warning: failed to init container state: %v", err)
+		}
 	}
 
 	containerDir := filepath.Join(containersBaseDir, containerID)
@@ -74,9 +92,16 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 	// Allocate an IP for this container
 	containerIP, err := ipam.Allocate(containerID)
 	if err != nil {
+		if lm != nil {
+			lm.MarkError(containerID, err.Error())
+		}
 		return fmt.Errorf("failed to allocate container IP: %w", err)
 	}
 	log.Printf("[run] allocated IP %s for container %s", containerIP, containerID)
+
+	if lm != nil {
+		lm.RecordNetwork(containerID, containerIP, network.GatewayIP, network.BridgeName)
+	}
 
 	hostVethName := fmt.Sprintf("veth-%s", containerID[:8])
 	containerVethName := "eth0"
@@ -99,7 +124,7 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 		}
 	}()
 
-	cmd := exec.Command("/proc/self/exe", append([]string{"init"}, args[1:]...)...)
+	cmd := exec.Command("/proc/self/exe", append([]string{"init"}, containerCmd...)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -166,9 +191,18 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 		signal.Stop(sigCh)
 		close(sigCh)
 		<-done
+		if lm != nil {
+			lm.MarkError(containerID, err.Error())
+		}
 		return err
 	}
 	log.Printf("[run] container PID on host: %d", cmd.Process.Pid)
+
+	if lm != nil {
+		if err := lm.MarkRunning(containerID, cmd.Process.Pid); err != nil {
+			log.Printf("[run] warning: failed to mark container running: %v", err)
+		}
+	}
 
 	// Setup veth pair now that we have the container PID
 	if err := network.SetupVeth(cmd.Process.Pid, containerIP, hostVethName, containerVethName); err != nil {
@@ -177,8 +211,10 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 
 	// Setup cgroups after process starts
 	if cgCfg != nil && (cgCfg.Memory != "" || cgCfg.CPU != "" || cgCfg.PIDs > 0 || cgCfg.CPUWeight > 0 || cgCfg.SwapMemory != "") {
-		if _, err := cgCfg.Setup(cmd.Process.Pid); err != nil {
+		if cgroupPath, err := cgCfg.Setup(cmd.Process.Pid); err != nil {
 			log.Printf("[run] warning: failed to setup cgroups: %v", err)
+		} else if lm != nil {
+			lm.RecordCgroupPath(containerID, cgroupPath)
 		}
 	}
 
@@ -187,6 +223,22 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 	signal.Stop(sigCh)
 	close(sigCh)
 	<-done
+
+	// Determine exit code
+	exitCode := 0
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+
+	if lm != nil {
+		if err := lm.MarkExited(containerID, exitCode); err != nil {
+			log.Printf("[run] warning: failed to mark container exited: %v", err)
+		}
+	}
 
 	if waitErr != nil {
 		log.Printf("[run] container exited with error: %v", waitErr)
