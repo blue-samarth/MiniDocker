@@ -12,11 +12,14 @@ import (
 	"syscall"
 
 	"miniDocker/cgroups"
+	"miniDocker/network"
 
 	"golang.org/x/sys/unix"
 )
 
 const containersBaseDir = "/var/lib/miniDocker/containers"
+
+var ipam = network.NewIPAM(network.Subnet)
 
 func generateContainerID() (string, error) {
 	b := make([]byte, 8)
@@ -63,6 +66,21 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 		cgCfg = &c
 	}
 
+	// Ensure bridge exists (idempotent)
+	if err := network.CreateBridge(); err != nil {
+		log.Printf("[run] warning: failed to create bridge: %v", err)
+	}
+
+	// Allocate an IP for this container
+	containerIP, err := ipam.Allocate(containerID)
+	if err != nil {
+		return fmt.Errorf("failed to allocate container IP: %w", err)
+	}
+	log.Printf("[run] allocated IP %s for container %s", containerIP, containerID)
+
+	hostVethName := fmt.Sprintf("veth-%s", containerID[:8])
+	containerVethName := "eth0"
+
 	defer func() {
 		if err := unix.Unmount(mergedDir, unix.MNT_DETACH); err != nil &&
 			err != unix.EINVAL && err != unix.ENOENT {
@@ -76,6 +94,9 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 				log.Printf("[run] warning: failed to cleanup cgroups: %v", err)
 			}
 		}
+		if err := ipam.Release(containerIP); err != nil {
+			log.Printf("[run] warning: failed to release IP %s: %v", containerIP, err)
+		}
 	}()
 
 	cmd := exec.Command("/proc/self/exe", append([]string{"init"}, args[1:]...)...)
@@ -88,11 +109,11 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 		"CONTAINER_UPPER="+upperDir,
 		"CONTAINER_WORK="+workDir,
 		"CONTAINER_MERGED="+mergedDir,
+		"CONTAINER_IP="+containerIP,
+		"CONTAINER_GATEWAY="+network.GatewayIP,
+		"CONTAINER_VETH="+containerVethName,
 	)
 
-	// unix.SysProcAttr is used for GidMappingsEnableSetgroups support.
-	// UidMappings/GidMappings fields on unix.SysProcAttr take []syscall.SysProcIDMap —
-	// the two packages are designed to interoperate this way.
 	cmd.SysProcAttr = &unix.SysProcAttr{
 		Cloneflags: unix.CLONE_NEWUTS |
 			unix.CLONE_NEWPID |
@@ -148,6 +169,11 @@ func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 		return err
 	}
 	log.Printf("[run] container PID on host: %d", cmd.Process.Pid)
+
+	// Setup veth pair now that we have the container PID
+	if err := network.SetupVeth(cmd.Process.Pid, containerIP, hostVethName, containerVethName); err != nil {
+		log.Printf("[run] warning: failed to setup veth: %v", err)
+	}
 
 	// Setup cgroups after process starts
 	if cgCfg != nil && (cgCfg.Memory != "" || cgCfg.CPU != "" || cgCfg.PIDs > 0 || cgCfg.CPUWeight > 0 || cgCfg.SwapMemory != "") {
