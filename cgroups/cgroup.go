@@ -2,7 +2,6 @@ package cgroups
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -14,7 +13,7 @@ const (
 	cgroupV2Root     = "/sys/fs/cgroup"
 	maxCPU           = 128.0
 	minMemBytes      = 4 * 1024 * 1024
-	defaultCPUPeriod = int64(100000)
+	defaultCPUPeriod = 100000
 )
 
 type CgroupConfig struct {
@@ -26,282 +25,235 @@ type CgroupConfig struct {
 	PIDs        int
 }
 
-// Validate checks the config for invalid values before Setup is called.
 func (cfg CgroupConfig) Validate() error {
 	if cfg.ContainerID == "" {
-		return errors.New("ContainerID must not be empty")
+		return errors.New("ContainerID required")
 	}
 
 	if cfg.Memory != "" {
 		mem, err := parseMemory(cfg.Memory)
 		if err != nil {
-			return fmt.Errorf("invalid Memory: %w", err)
+			return err
 		}
 		if mem < minMemBytes {
-			return fmt.Errorf("memory limit %d bytes is below minimum %d bytes (4MiB)", mem, minMemBytes)
+			return errors.New("memory limit too low (min 4MiB)")
 		}
 	}
 
 	if cfg.SwapMemory != "" {
 		swap, err := parseMemory(cfg.SwapMemory)
 		if err != nil {
-			return fmt.Errorf("invalid SwapMemory: %w", err)
+			return err
 		}
 		if cfg.Memory != "" {
 			mem, _ := parseMemory(cfg.Memory)
 			if swap < mem {
-				return fmt.Errorf("swap limit (%d) must be >= memory limit (%d)", swap, mem)
+				return errors.New("swap must be ≥ memory")
 			}
 		}
 		if swap < minMemBytes {
-			return fmt.Errorf("swap limit %d bytes is below minimum %d bytes (4MiB)", swap, minMemBytes)
+			return errors.New("swap limit too low (min 4MiB)")
 		}
 	}
 
 	if cfg.CPU != "" {
-		cpuVal, err := strconv.ParseFloat(strings.TrimSpace(cfg.CPU), 64)
+		v, err := strconv.ParseFloat(strings.TrimSpace(cfg.CPU), 64)
 		if err != nil {
-			return fmt.Errorf("invalid CPU value %q: %w", cfg.CPU, err)
+			return err
 		}
-		if cpuVal <= 0 {
-			return fmt.Errorf("CPU must be positive, got %f", cpuVal)
+		if v <= 0 {
+			return errors.New("CPU must be positive")
 		}
-		if cpuVal > maxCPU {
-			return fmt.Errorf("CPU value %f exceeds maximum of %g", cpuVal, maxCPU)
+		if v > maxCPU {
+			return errors.New("CPU exceeds maximum")
 		}
 	}
 
 	if cfg.CPUWeight < 0 || cfg.CPUWeight > 10000 {
-		return fmt.Errorf("CPUWeight must be between 0 and 10000, got %d", cfg.CPUWeight)
+		return errors.New("CPUWeight out of range [0–10000]")
 	}
 
 	if cfg.PIDs < 0 {
-		return fmt.Errorf("PIDs must be non-negative, got %d", cfg.PIDs)
+		return errors.New("PIDs cannot be negative")
 	}
 
 	return nil
 }
 
-// Path returns the cgroup directory for this container.
 func (cfg CgroupConfig) Path() string {
 	return filepath.Join(cgroupV2Root, "miniDocker", cfg.ContainerID)
 }
 
-// Setup validates the config, enables controllers, applies limits, and
-// attaches pid to the cgroup. Returns the cgroup path on success.
 func (cfg CgroupConfig) Setup(pid int) (string, error) {
 	if err := cfg.Validate(); err != nil {
-		return "", fmt.Errorf("invalid cgroup config: %w", err)
+		return "", err
 	}
 
 	if err := enableControllers(); err != nil {
 		return "", err
 	}
 
-	cgroupPath := cfg.Path()
-	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
-		return "", fmt.Errorf("failed to create cgroup directory %q: %w", cgroupPath, err)
-	}
-
-	if err := cfg.applyLimits(cgroupPath); err != nil {
-		os.RemoveAll(cgroupPath)
+	path := cfg.Path()
+	if err := os.MkdirAll(path, 0755); err != nil {
 		return "", err
 	}
 
-	log.Printf("[cgroup] attaching PID %d to %s", pid, cgroupPath)
-	if err := writeFile(filepath.Join(cgroupPath, "cgroup.procs"), fmt.Sprintf("%d", pid)); err != nil {
-		os.RemoveAll(cgroupPath)
-		return "", fmt.Errorf("failed to attach process to cgroup: %w", err)
+	if err := cfg.applyLimits(path); err != nil {
+		_ = os.RemoveAll(path)
+		return "", err
 	}
 
-	return cgroupPath, nil
+	log.Printf("attaching pid %d to cgroup %s", pid, path)
+	if err := os.WriteFile(filepath.Join(path, "cgroup.procs"), []byte(strconv.Itoa(pid)), 0644); err != nil {
+		_ = os.RemoveAll(path)
+		return "", err
+	}
+
+	return path, nil
 }
 
-func (cfg CgroupConfig) applyLimits(cgroupPath string) error {
-	// Memory limit
+func (cfg CgroupConfig) applyLimits(path string) error {
+	write := func(file, value string) error {
+		return os.WriteFile(filepath.Join(path, file), []byte(value), 0644)
+	}
+
 	if cfg.Memory != "" {
-		memBytes, _ := parseMemory(cfg.Memory) // already validated
-		log.Printf("[cgroup] setting memory.max = %d bytes", memBytes)
-		if err := writeFile(filepath.Join(cgroupPath, "memory.max"), fmt.Sprintf("%d", memBytes)); err != nil {
-			return fmt.Errorf("failed to set memory limit: %w", err)
+		bytes, _ := parseMemory(cfg.Memory)
+		log.Printf("memory.max = %d", bytes)
+		if err := write("memory.max", strconv.FormatInt(bytes, 10)); err != nil {
+			return err
 		}
 	}
 
-	// Swap limit
 	if cfg.SwapMemory != "" {
-		swapBytes, _ := parseMemory(cfg.SwapMemory)
-		log.Printf("[cgroup] setting memory.swap.max = %d bytes", swapBytes)
-		if err := writeFile(filepath.Join(cgroupPath, "memory.swap.max"), fmt.Sprintf("%d", swapBytes)); err != nil {
-			return fmt.Errorf("failed to set swap limit: %w", err)
+		bytes, _ := parseMemory(cfg.SwapMemory)
+		log.Printf("memory.swap.max = %d", bytes)
+		if err := write("memory.swap.max", strconv.FormatInt(bytes, 10)); err != nil {
+			return err
 		}
 	}
 
-	// CPU quota
 	if cfg.CPU != "" {
-		cpuMax, _ := parseCPU(cfg.CPU)
-		log.Printf("[cgroup] setting cpu.max = %s", cpuMax)
-		if err := writeFile(filepath.Join(cgroupPath, "cpu.max"), cpuMax); err != nil {
-			return fmt.Errorf("failed to set CPU limit: %w", err)
+		val, _ := parseCPU(cfg.CPU)
+		log.Printf("cpu.max = %s", val)
+		if err := write("cpu.max", val); err != nil {
+			return err
 		}
 	}
 
-	// CPU weight (alternative to quota — relative share)
 	if cfg.CPUWeight > 0 {
-		log.Printf("[cgroup] setting cpu.weight = %d", cfg.CPUWeight)
-		if err := writeFile(filepath.Join(cgroupPath, "cpu.weight"), fmt.Sprintf("%d", cfg.CPUWeight)); err != nil {
-			return fmt.Errorf("failed to set CPU weight: %w", err)
+		log.Printf("cpu.weight = %d", cfg.CPUWeight)
+		if err := write("cpu.weight", strconv.Itoa(cfg.CPUWeight)); err != nil {
+			return err
 		}
 	}
 
-	// PID limit
 	if cfg.PIDs > 0 {
-		log.Printf("[cgroup] setting pids.max = %d", cfg.PIDs)
-		if err := writeFile(filepath.Join(cgroupPath, "pids.max"), fmt.Sprintf("%d", cfg.PIDs)); err != nil {
-			return fmt.Errorf("failed to set PIDs limit: %w", err)
+		log.Printf("pids.max = %d", cfg.PIDs)
+		if err := write("pids.max", strconv.Itoa(cfg.PIDs)); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-// Reset clears all resource limits on the cgroup back to kernel defaults.
 func (cfg CgroupConfig) Reset() error {
-	cgroupPath := cfg.Path()
-	log.Printf("[cgroup] resetting all limits for %s", cgroupPath)
+	path := cfg.Path()
+	log.Printf("resetting cgroup %s", path)
 
-	type resetSpec struct {
-		file  string
-		value string
-	}
-
-	resets := []resetSpec{
+	type kv struct{ file, val string }
+	for _, r := range []kv{
 		{"memory.max", "max"},
 		{"memory.swap.max", "max"},
 		{"cpu.max", "max 100000"},
 		{"cpu.weight", "100"},
 		{"pids.max", "max"},
-	}
-
-	var errs []string
-	for _, r := range resets {
-		path := filepath.Join(cgroupPath, r.file)
-		if _, err := os.Stat(path); err == nil {
-			if err := writeFile(path, r.value); err != nil {
-				errs = append(errs, fmt.Sprintf("%s: %v", r.file, err))
-			}
+	} {
+		f := filepath.Join(path, r.file)
+		if _, err := os.Stat(f); err == nil {
+			_ = os.WriteFile(f, []byte(r.val), 0644)
 		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors resetting cgroup limits: %s", strings.Join(errs, "; "))
 	}
 	return nil
 }
 
-// ResetMemory clears only the memory limits back to defaults.
 func (cfg CgroupConfig) ResetMemory() error {
-	cgroupPath := cfg.Path()
-	log.Printf("[cgroup] resetting memory limits for %s", cgroupPath)
+	path := cfg.Path()
+	log.Printf("resetting memory on %s", path)
 
 	for _, f := range []string{"memory.max", "memory.swap.max"} {
-		path := filepath.Join(cgroupPath, f)
-		if _, err := os.Stat(path); err == nil {
-			if err := writeFile(path, "max"); err != nil {
-				return fmt.Errorf("failed to reset %s: %w", f, err)
+		p := filepath.Join(path, f)
+		if _, err := os.Stat(p); err == nil {
+			if err := os.WriteFile(p, []byte("max"), 0644); err != nil {
+				return err
 			}
 		}
 	}
 	return nil
 }
 
-// Cleanup removes the cgroup directory. Should be called after the container exits.
 func (cfg CgroupConfig) Cleanup() error {
-	cgroupPath := cfg.Path()
-	log.Printf("[cgroup] removing cgroup %s", cgroupPath)
-	if err := os.RemoveAll(cgroupPath); err != nil {
-		return fmt.Errorf("failed to remove cgroup %q: %w", cgroupPath, err)
-	}
-	return nil
+	path := cfg.Path()
+	log.Printf("removing cgroup %s", path)
+	return os.RemoveAll(path)
 }
 
-// enableControllers ensures memory, cpu, and pids controllers are available
-// in the miniDocker parent cgroup.
 func enableControllers() error {
-	parentPath := filepath.Join(cgroupV2Root, "miniDocker")
-	if err := os.MkdirAll(parentPath, 0755); err != nil {
-		return fmt.Errorf("failed to create parent cgroup dir: %w", err)
+	parent := filepath.Join(cgroupV2Root, "miniDocker")
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return err
 	}
 
 	controllers := "+memory +cpu +pids"
 
-	// Best-effort at root — may fail without CAP_SYS_ADMIN, that's OK.
-	if err := writeFile(filepath.Join(cgroupV2Root, "cgroup.subtree_control"), controllers); err != nil {
-		log.Printf("[cgroup] warning: could not enable controllers at root (may need elevated privileges): %v", err)
-	}
+	// root level — best effort
+	_ = os.WriteFile(filepath.Join(cgroupV2Root, "cgroup.subtree_control"), []byte(controllers), 0644)
 
-	// Must succeed at the miniDocker level.
-	if err := writeFile(filepath.Join(parentPath, "cgroup.subtree_control"), controllers); err != nil {
-		return fmt.Errorf("failed to enable cgroup controllers: %w", err)
+	// miniDocker level — required
+	if err := os.WriteFile(filepath.Join(parent, "cgroup.subtree_control"), []byte(controllers), 0644); err != nil {
+		return err
 	}
-
 	return nil
 }
 
-// parseMemory converts a human-readable memory string to bytes.
-// Returns 0 for empty string (no limit).
-func parseMemory(memStr string) (int64, error) {
-	if memStr == "" {
+func parseMemory(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
 		return 0, nil
 	}
 
-	memStr = strings.TrimSpace(memStr)
-	multipliers := map[string]int64{
-		"b": 1,
-		"k": 1024,
-		"m": 1024 * 1024,
-		"g": 1024 * 1024 * 1024,
-	}
+	m := map[string]int64{"b": 1, "k": 1 << 10, "m": 1 << 20, "g": 1 << 30}
 
-	for unit, mult := range multipliers {
-		if strings.HasSuffix(strings.ToLower(memStr), unit) {
-			numStr := strings.TrimSuffix(strings.ToLower(memStr), unit)
-			val, err := strconv.ParseInt(numStr, 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("invalid memory value: %s", memStr)
+	for unit, mult := range m {
+		if strings.HasSuffix(strings.ToLower(s), unit) {
+			num := strings.TrimSuffix(strings.ToLower(s), unit)
+			v, err := strconv.ParseInt(num, 10, 64)
+			if err != nil || v <= 0 {
+				return 0, errors.New("invalid memory string")
 			}
-			if val <= 0 {
-				return 0, fmt.Errorf("memory value must be positive: %s", memStr)
-			}
-			return val * mult, nil
+			return v * mult, nil
 		}
 	}
 
-	val, err := strconv.ParseInt(memStr, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid memory value: %s", memStr)
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v <= 0 {
+		return 0, errors.New("invalid memory string")
 	}
-	if val <= 0 {
-		return 0, fmt.Errorf("memory value must be positive: %s", memStr)
-	}
-	return val, nil
+	return v, nil
 }
 
-// parseCPU converts a CPU fraction string to the "quota period" format
-// used by cpu.max.
-func parseCPU(cpuStr string) (string, error) {
-	if cpuStr == "" {
+func parseCPU(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
 		return "", nil
 	}
 
-	cpuVal, err := strconv.ParseFloat(strings.TrimSpace(cpuStr), 64)
+	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return "", fmt.Errorf("invalid CPU value: %s", cpuStr)
+		return "", err
 	}
 
-	quota := int64(float64(defaultCPUPeriod) * cpuVal)
-	return fmt.Sprintf("%d %d", quota, defaultCPUPeriod), nil
-}
-
-func writeFile(path string, data string) error {
-	return os.WriteFile(path, []byte(data), 0644)
+	quota := int64(float64(defaultCPUPeriod) * f)
+	return strconv.FormatInt(quota, 10) + " " + strconv.FormatInt(defaultCPUPeriod, 10), nil
 }

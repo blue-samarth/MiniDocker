@@ -1,7 +1,7 @@
 package fs
 
 import (
-	"fmt"
+	"errors"
 	"os"
 	"strings"
 
@@ -9,25 +9,24 @@ import (
 )
 
 type OverlayConfig struct {
-	Lower  string // read-only image layer (must already exist)
-	Upper  string // writable layer
-	Work   string // kernel scratch space (must be same filesystem as Upper)
-	Merged string // unified mount point presented to container
+	Lower  string // read-only lower layer (must exist)
+	Upper  string // writable upper layer
+	Work   string // workdir (must be on same fs as Upper)
+	Merged string // mount point for the unified view
 }
 
 func (cfg OverlayConfig) validate() error {
-	fields := map[string]string{
+	for name, path := range map[string]string{
 		"Lower":  cfg.Lower,
 		"Upper":  cfg.Upper,
 		"Work":   cfg.Work,
 		"Merged": cfg.Merged,
-	}
-	for name, path := range fields {
+	} {
 		if path == "" {
-			return fmt.Errorf("%s path must not be empty", name)
+			return errors.New(name + " path required")
 		}
 		if strings.ContainsRune(path, ',') {
-			return fmt.Errorf("%s path %q contains a comma, which is invalid in overlay mount options", name, path)
+			return errors.New(name + " path contains invalid comma")
 		}
 	}
 	return nil
@@ -35,34 +34,27 @@ func (cfg OverlayConfig) validate() error {
 
 func MountOverlay(cfg OverlayConfig) error {
 	if err := cfg.validate(); err != nil {
-		return fmt.Errorf("invalid overlay config: %w", err)
+		return err
 	}
 
 	if _, err := os.Stat(cfg.Lower); err != nil {
-		return fmt.Errorf("lower dir %q must exist: %w", cfg.Lower, err)
+		return err
 	}
 
-	var created []string
+	// Create upper/work/merged if missing (MkdirAll is idempotent)
 	for _, dir := range []string{cfg.Upper, cfg.Work, cfg.Merged} {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				for _, d := range created {
-					os.RemoveAll(d)
-				}
-				return fmt.Errorf("failed to create overlay dir %q: %w", dir, err)
-			}
-			created = append(created, dir)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
 		}
 	}
 
-	opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", cfg.Lower, cfg.Upper, cfg.Work)
-	flags := uintptr(0)
+	opts := "lowerdir=" + cfg.Lower +
+		",upperdir=" + cfg.Upper +
+		",workdir=" + cfg.Work
 
-	if err := unix.Mount("overlay", cfg.Merged, "overlay", flags, opts); err != nil {
-		for _, d := range created {
-			os.RemoveAll(d)
-		}
-		return fmt.Errorf("failed to mount overlay at %q: %w", cfg.Merged, err)
+	if err := unix.Mount("overlay", cfg.Merged, "overlay", 0, opts); err != nil {
+		return err
 	}
+
 	return nil
 }

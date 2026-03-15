@@ -1,11 +1,12 @@
 package network
 
 import (
-	"fmt"
+	"errors"
 	"log"
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/vishvananda/netlink"
 )
@@ -13,141 +14,92 @@ import (
 const (
 	BridgeName = "miniDocker0"
 	BridgeCIDR = "172.20.0.1/16"
+	Subnet     = "172.20.0.0/16" // used in iptables rules
 )
 
-// CreateBridge creates the miniDocker0 bridge if it doesn't already exist.
-// It is idempotent — safe to call on every container start.
 func CreateBridge() error {
-	// Check if bridge already exists.
-	if link, err := netlink.LinkByName(BridgeName); err == nil {
+	link, err := netlink.LinkByName(BridgeName)
+	if err == nil {
 		if _, ok := link.(*netlink.Bridge); ok {
-			log.Printf("[bridge] %s already exists, skipping creation", BridgeName)
 			return nil
 		}
 	}
 
-	log.Printf("[bridge] creating bridge %s with CIDR %s", BridgeName, BridgeCIDR)
-
-	bridge := &netlink.Bridge{
-		LinkAttrs: netlink.LinkAttrs{
-			Name: BridgeName,
-		},
-	}
-
+	bridge := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: BridgeName}}
 	if err := netlink.LinkAdd(bridge); err != nil {
-		return fmt.Errorf("failed to create bridge %s: %w", BridgeName, err)
+		return err
 	}
 
-	link, err := netlink.LinkByName(BridgeName)
+	link, err = netlink.LinkByName(BridgeName)
 	if err != nil {
-		return fmt.Errorf("failed to find bridge after creation: %w", err)
+		return err
 	}
 
-	ip, ipNet, err := net.ParseCIDR(BridgeCIDR)
+	_, ipNet, err := net.ParseCIDR(BridgeCIDR)
 	if err != nil {
-		return fmt.Errorf("failed to parse bridge CIDR %s: %w", BridgeCIDR, err)
-	}
-	ipNet.IP = ip // use the host address, not the network address
-
-	addr := &netlink.Addr{IPNet: ipNet}
-	if err := netlink.AddrAdd(link, addr); err != nil {
 		netlink.LinkDel(link)
-		return fmt.Errorf("failed to assign address to bridge: %w", err)
+		return err
+	}
+	ipNet.IP = net.ParseIP(BridgeCIDR[:strings.LastIndex(BridgeCIDR, "/")])
+
+	if err := netlink.AddrAdd(link, &netlink.Addr{IPNet: ipNet}); err != nil {
+		netlink.LinkDel(link)
+		return err
 	}
 
 	if err := netlink.LinkSetUp(link); err != nil {
 		netlink.LinkDel(link)
-		return fmt.Errorf("failed to bring up bridge: %w", err)
+		return err
 	}
 
 	if err := enableIPForwarding(); err != nil {
+		netlink.LinkDel(link)
 		return err
 	}
 
-	if err := addMasqueradeRule(); err != nil {
-		return err
-	}
-
-	log.Printf("[bridge] bridge %s created successfully", BridgeName)
-	return nil
+	return addMasqueradeRule()
 }
 
-// DestroyBridge removes the miniDocker0 bridge.
 func DestroyBridge() error {
 	link, err := netlink.LinkByName(BridgeName)
 	if err != nil {
-		log.Printf("[bridge] bridge %s not found, skipping destroy", BridgeName)
 		return nil
 	}
 
-	log.Printf("[bridge] destroying bridge %s", BridgeName)
-
-	if err := removeMasqueradeRule(); err != nil {
-		log.Printf("[bridge] warning: failed to remove masquerade rule: %v", err)
-	}
+	_ = removeMasqueradeRule()
 
 	if err := netlink.LinkSetDown(link); err != nil {
-		return fmt.Errorf("failed to bring down bridge: %w", err)
+		return err
 	}
 
-	if err := netlink.LinkDel(link); err != nil {
-		return fmt.Errorf("failed to delete bridge: %w", err)
-	}
-
-	log.Printf("[bridge] bridge %s destroyed", BridgeName)
-	return nil
+	return netlink.LinkDel(link)
 }
 
-// enableIPForwarding writes 1 to /proc/sys/net/ipv4/ip_forward.
 func enableIPForwarding() error {
-	const path = "/proc/sys/net/ipv4/ip_forward"
-	log.Printf("[bridge] enabling IP forwarding")
-	if err := os.WriteFile(path, []byte("1\n"), 0644); err != nil {
-		return fmt.Errorf("failed to enable IP forwarding: %w", err)
-	}
-	return nil
+	return os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1\n"), 0644)
 }
 
-// addMasqueradeRule adds an iptables MASQUERADE rule for the bridge subnet.
 func addMasqueradeRule() error {
-	log.Printf("[bridge] adding iptables MASQUERADE rule for %s", Subnet)
-	err := exec.Command("iptables",
-		"-t", "nat",
-		"-C", "POSTROUTING",
-		"-s", Subnet,
-		"!", "-o", BridgeName,
-		"-j", "MASQUERADE",
-	).Run()
-	if err == nil {
-		// Rule already exists.
+	cmd := exec.Command("iptables", "-t", "nat", "-C", "POSTROUTING",
+		"-s", Subnet, "!", "-o", BridgeName, "-j", "MASQUERADE")
+
+	if cmd.Run() == nil {
 		return nil
 	}
 
-	out, err := exec.Command("iptables",
-		"-t", "nat",
-		"-A", "POSTROUTING",
-		"-s", Subnet,
-		"!", "-o", BridgeName,
-		"-j", "MASQUERADE",
-	).CombinedOutput()
+	out, err := exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING",
+		"-s", Subnet, "!", "-o", BridgeName, "-j", "MASQUERADE").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to add masquerade rule: %w — %s", err, string(out))
+		return errors.New("iptables MASQUERADE add failed: " + string(out))
 	}
 	return nil
 }
 
-// removeMasqueradeRule removes the iptables MASQUERADE rule.
 func removeMasqueradeRule() error {
-	log.Printf("[bridge] removing iptables MASQUERADE rule")
-	out, err := exec.Command("iptables",
-		"-t", "nat",
-		"-D", "POSTROUTING",
-		"-s", Subnet,
-		"!", "-o", BridgeName,
-		"-j", "MASQUERADE",
-	).CombinedOutput()
+	out, err := exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING",
+		"-s", Subnet, "!", "-o", BridgeName, "-j", "MASQUERADE").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to remove masquerade rule: %w — %s", err, string(out))
+		log.Printf("iptables MASQUERADE remove failed (non-fatal): %s", string(out))
 	}
 	return nil
 }
