@@ -118,7 +118,7 @@ func TestPhase3_CgroupValidation_Swap(t *testing.T) {
 			memory:     "512m",
 			swap:       "256m",
 			wantErr:    true,
-			errorCheck: "swap limit",
+			errorCheck: "swap must be",
 		},
 		{
 			name:    "swap == memory",

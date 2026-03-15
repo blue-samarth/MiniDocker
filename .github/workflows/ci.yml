@@ -22,8 +22,40 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
-    - name: Run unit tests
-      run: go test -v -short ./...
+    - name: Run unit tests with coverage
+      run: |
+        go test -v -coverpkg=./... -coverprofile=coverage.out ./tests/...
+
+    - name: Display coverage report
+      if: hashFiles('coverage.out') != ''
+      run: |
+        echo "=== Coverage Summary ==="
+        go tool cover -func=coverage.out | tail -1
+        echo "" 
+        echo "=== Coverage by Package ==="
+        go tool cover -func=coverage.out \
+        | grep -v "_test.go" \
+        | grep -v "^total" \
+        | awk '{printf "%-60s %s\n", $1, $3}' \
+        | sort
+
+    - name: Generate HTML coverage report
+      if: hashFiles('coverage.out') != ''
+      run: go tool cover -html=coverage.out -o coverage.html
+
+    - name: Upload coverage artifact
+      if: hashFiles('coverage.html') != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: coverage.html
+        retention-days: 30
+
+    - name: Comment coverage on PR
+      if: github.event_name == 'pull_request'
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')
+        echo "**Test Coverage: ${COVERAGE}**" >> $GITHUB_STEP_SUMMARY
 
     - name: Build binary
       run: go build -v -o miniDocker .
@@ -45,10 +77,39 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
+    - name: Configure sudo for passwordless execution
+      run: |
+        echo "Configuring sudo for passwordless root access..."
+        sudo usermod -aG sudo $USER
+        echo "$USER ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers.d/$USER
+        sudo chmod 0440 /etc/sudoers.d/$USER
+        sudo -n true && echo " Passwordless sudo configured" || echo "  Passwordless sudo may not be available"
+
+    - name: Verify root capabilities
+      run: |
+        echo "=== Checking Linux capabilities ==="
+        id
+        sudo id
+        echo ""
+        echo "=== Checking namespace support ==="
+        sudo ip netns list 2>/dev/null || echo "  Network namespaces may not be available"
+        sudo cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || echo "  Unprivileged user namespaces may not be available"
+
     - name: Build binary for integration tests
       run: go build -v -o miniDocker_test .
 
-    - name: Run integration tests
+    - name: Run integration tests with full coverage
       run: |
         cd tests
-        sudo --preserve-env=PATH $(which go) test -v -run TestPhase1 || echo "Integration tests skipped (namespace support may be limited in CI)"
+        sudo --preserve-env=PATH $(which go) test -v -coverprofile=integration-coverage.out ./... 2>&1 | tee integration-test.log || true
+
+    - name: Display integration test results
+      if: hashFiles('integration-test.log') != ''
+      run: |
+        echo "=== Integration Test Results ==="
+        grep -E "(PASS|FAIL|SKIP)" tests/integration-test.log || echo "See full log above"
+
+    - name: Run benchmarks
+      run: |
+        cd tests
+        sudo --preserve-env=PATH $(which go) test -v -bench=. -timeout 120s ./... || true

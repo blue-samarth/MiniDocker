@@ -534,3 +534,169 @@ func TestPhase7_BinaryLogs(t *testing.T) {
 	out, err := exec.Command("../miniDocker_test", "logs", "--tail", "10", ids[0]).CombinedOutput()
 	t.Logf("logs: %s err=%v", out, err)
 }
+// ─── Performance Tests ───────────────────────────────────────────────────────
+
+// BenchmarkContainerCreate benchmarks container creation performance
+func BenchmarkContainerCreate(b *testing.B) {
+	lm := newLM(&testing.T{})
+	cfg := &state.ContainerConfig{
+		Image:   "/img",
+		Command: []string{"/bin/sh"},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		id := fmt.Sprintf("bench-create-%d", i)
+		lm.InitContainer(id, cfg)
+	}
+}
+
+// BenchmarkStateTransitions benchmarks state machine transitions
+func BenchmarkStateTransitions(b *testing.B) {
+	lm := newLM(&testing.T{})
+	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		id := fmt.Sprintf("bench-state-%d", i)
+		lm.InitContainer(id, cfg)
+		lm.MarkRunning(id, 10000+i)
+		lm.MarkExited(id, 0)
+	}
+}
+
+// BenchmarkContainerListing benchmarks container enumeration
+func BenchmarkContainerListing(b *testing.B) {
+	lm := newLM(&testing.T{})
+	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
+
+	// Create 100 containers
+	for i := 0; i < 100; i++ {
+		lm.InitContainer(fmt.Sprintf("bench-list-%d", i), cfg)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		lm.ListContainers()
+	}
+}
+
+// BenchmarkLogWrite benchmarks log write throughput
+func BenchmarkLogWrite(b *testing.B) {
+	dir := b.TempDir()
+	lm, _ := state.NewLogManager("bench-log", dir)
+	defer lm.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		fmt.Fprintf(lm.StdoutWriter(), "benchmark log line %d\n", i)
+	}
+}
+
+// BenchmarkLogRead benchmarks log read performance
+func BenchmarkLogRead(b *testing.B) {
+	dir := b.TempDir()
+	lm, _ := state.NewLogManager("bench-log", dir)
+
+	// Write 1000 lines
+	for i := 0; i < 1000; i++ {
+		fmt.Fprintf(lm.StdoutWriter(), "log line %d\n", i)
+	}
+	lm.Close()
+
+	lm2, _ := state.NewLogManager("bench-log", dir)
+	defer lm2.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		lm2.GetLogs(100)
+	}
+}
+
+// BenchmarkConcurrentReads benchmarks concurrent state access
+func BenchmarkConcurrentReads(b *testing.B) {
+	lm := newLM(&testing.T{})
+	id := "bench-concurrent"
+	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
+	lm.InitContainer(id, cfg)
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			lm.GetState(id)
+		}
+	})
+}
+
+// TestBench_StateManagerPerformance comprehensive performance characterization
+func TestBench_StateManagerPerformance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipped in short mode")
+	}
+
+	lm := newLM(t)
+	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
+
+	// Measure creation throughput
+	start := time.Now()
+	for i := 0; i < 100; i++ {
+		lm.InitContainer(fmt.Sprintf("perf-test-%d", i), cfg)
+	}
+	duration := time.Since(start)
+	throughput := 100.0 * float64(time.Second) / float64(duration)
+	t.Logf("Container creation: 100 containers in %v (%.0f/sec)", duration, throughput)
+	if throughput < 50 {
+		t.Logf("WARNING: Container creation throughput below expected (%.0f/sec < 50/sec)", throughput)
+	}
+
+	// Measure listing performance with many containers
+	start = time.Now()
+	for i := 0; i < 1000; i++ {
+		lm.ListContainers()
+	}
+	duration = time.Since(start)
+	avgLatency := duration / 1000
+	t.Logf("Container listing: 1000 lists in %v (%.3f ms avg)", duration, float64(avgLatency.Microseconds())/1000)
+	if avgLatency > 10*time.Millisecond {
+		t.Logf("WARNING: Container listing latency high (%.3f ms > 10 ms)", float64(avgLatency.Microseconds())/1000)
+	}
+}
+
+// TestBench_LogManagerPerformance comprehensive log performance characterization
+func TestBench_LogManagerPerformance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipped in short mode")
+	}
+
+	dir := t.TempDir()
+	lm, _ := state.NewLogManager("perf-log", dir)
+	defer lm.Close()
+
+	// Measure write throughput
+	start := time.Now()
+	for i := 0; i < 10000; i++ {
+		fmt.Fprintf(lm.StdoutWriter(), "line %d\n", i)
+	}
+	duration := time.Since(start)
+	throughput := 10000.0 * float64(time.Second) / float64(duration)
+	t.Logf("Log writing: 10000 lines in %v (%.0f lines/sec)", duration, throughput)
+	if throughput < 1000 {
+		t.Logf("WARNING: Log write throughput below expected (%.0f lines/sec < 1000/sec)", throughput)
+	}
+
+	// Measure read latency
+	lm.Close()
+	lm2, _ := state.NewLogManager("perf-log", dir)
+	defer lm2.Close()
+
+	start = time.Now()
+	for i := 0; i < 100; i++ {
+		lm2.GetLogs(100)
+	}
+	duration = time.Since(start)
+	avgLatency := duration / 100
+	t.Logf("Log reading: 100 reads in %v (%.3f ms avg)", duration, float64(avgLatency.Microseconds())/1000)
+	if avgLatency > 50*time.Millisecond {
+		t.Logf("WARNING: Log read latency high (%.3f ms > 50 ms)", float64(avgLatency.Microseconds())/1000)
+	}
+}

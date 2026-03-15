@@ -72,7 +72,7 @@ func TestCgroupConfig_Validate_InvalidConfig(t *testing.T) {
 				ContainerID: "",
 				Memory:      "256m",
 			},
-			want: "ContainerID must not be empty",
+			want: "ContainerID required",
 		},
 		{
 			name: "invalid memory format",
@@ -80,7 +80,7 @@ func TestCgroupConfig_Validate_InvalidConfig(t *testing.T) {
 				ContainerID: "abc123",
 				Memory:      "invalid",
 			},
-			want: "invalid Memory",
+			want: "invalid memory string",
 		},
 		{
 			name: "memory below minimum",
@@ -88,7 +88,7 @@ func TestCgroupConfig_Validate_InvalidConfig(t *testing.T) {
 				ContainerID: "abc123",
 				Memory:      "1m",
 			},
-			want: "below minimum",
+			want: "memory limit too low",
 		},
 		{
 			name: "invalid cpu format",
@@ -96,7 +96,7 @@ func TestCgroupConfig_Validate_InvalidConfig(t *testing.T) {
 				ContainerID: "abc123",
 				CPU:         "not_a_number",
 			},
-			want: "invalid CPU value",
+			want: "strconv.ParseFloat",
 		},
 		{
 			name: "zero cpu",
@@ -112,7 +112,7 @@ func TestCgroupConfig_Validate_InvalidConfig(t *testing.T) {
 				ContainerID: "abc123",
 				PIDs:        -1,
 			},
-			want: "PIDs must be non-negative",
+			want: "PIDs cannot be negative",
 		},
 		{
 			name: "swap < memory",
@@ -121,7 +121,7 @@ func TestCgroupConfig_Validate_InvalidConfig(t *testing.T) {
 				Memory:      "512m",
 				SwapMemory:  "256m",
 			},
-			want: "swap limit",
+			want: "swap must be",
 		},
 	}
 

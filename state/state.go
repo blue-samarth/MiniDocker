@@ -47,36 +47,30 @@ type ContainerState struct {
 	StderrPath string `json:"stderr_path"`
 }
 
-// StateManager handles all container state operations with thread-safe access.
 type StateManager struct {
 	stateDir string
 	states   map[string]*ContainerState
 	mu       sync.RWMutex
 }
 
-// NewStateManager creates a StateManager using the default state directory,
-// loading any existing state from disk.
 func NewStateManager() (*StateManager, error) {
 	return NewStateManagerWithDir(stateBaseDir)
 }
 
-// NewStateManagerWithDir creates a StateManager using a custom directory.
-// Useful for testing without requiring root.
 func NewStateManagerWithDir(dir string) (*StateManager, error) {
 	sm := &StateManager{
 		stateDir: dir,
 		states:   make(map[string]*ContainerState),
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create state dir %q: %w", dir, err)
+		return nil, err
 	}
 	if err := sm.loadAll(); err != nil {
-		return nil, fmt.Errorf("failed to load existing state: %w", err)
+		return nil, err
 	}
 	return sm, nil
 }
 
-// CreateContainer initialises a new container state record.
 func (sm *StateManager) CreateContainer(id string, cfg *ContainerConfig) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -84,7 +78,7 @@ func (sm *StateManager) CreateContainer(id string, cfg *ContainerConfig) error {
 	containerDir := filepath.Join(sm.stateDir, id)
 	logsDir := filepath.Join(containerDir, "logs")
 	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create container state dir: %w", err)
+		return err
 	}
 
 	cs := &ContainerState{
@@ -108,7 +102,6 @@ func (sm *StateManager) CreateContainer(id string, cfg *ContainerConfig) error {
 	return sm.persist(id, cs)
 }
 
-// UpdateStatus transitions a container to a new status.
 func (sm *StateManager) UpdateStatus(id string, status ContainerStatus) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -118,16 +111,7 @@ func (sm *StateManager) UpdateStatus(id string, status ContainerStatus) error {
 		return err
 	}
 
-	// Validate transition
-	allowed := ValidTransitions[cs.Status]
-	valid := false
-	for _, s := range allowed {
-		if s == status {
-			valid = true
-			break
-		}
-	}
-	if !valid {
+	if !isValidTransition(cs.Status, status) {
 		return &ErrInvalidStateTransition{From: cs.Status, To: status}
 	}
 
@@ -138,7 +122,6 @@ func (sm *StateManager) UpdateStatus(id string, status ContainerStatus) error {
 	return sm.persist(id, cs)
 }
 
-// SetPid records the host PID of the container process.
 func (sm *StateManager) SetPid(id string, pid int) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -150,16 +133,12 @@ func (sm *StateManager) SetPid(id string, pid int) error {
 
 	cs.Pid = pid
 
-	// Also write a plain pid file for external tooling
 	pidFile := filepath.Join(sm.stateDir, id, "pid")
-	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", pid)), 0644); err != nil {
-		log.Printf("[state] warning: could not write pid file: %v", err)
-	}
+	_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", pid)), 0644) // best effort
 
 	return sm.persist(id, cs)
 }
 
-// SetExit records the exit code and marks the container as exited.
 func (sm *StateManager) SetExit(id string, exitCode int) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -167,6 +146,10 @@ func (sm *StateManager) SetExit(id string, exitCode int) error {
 	cs, err := sm.get(id)
 	if err != nil {
 		return err
+	}
+
+	if !isValidTransition(cs.Status, StatusExited) {
+		return &ErrInvalidStateTransition{From: cs.Status, To: StatusExited}
 	}
 
 	cs.ExitCode = exitCode
@@ -177,7 +160,6 @@ func (sm *StateManager) SetExit(id string, exitCode int) error {
 	return sm.persist(id, cs)
 }
 
-// SetError records an error message and marks the container as errored.
 func (sm *StateManager) SetError(id string, errMsg string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -185,6 +167,10 @@ func (sm *StateManager) SetError(id string, errMsg string) error {
 	cs, err := sm.get(id)
 	if err != nil {
 		return err
+	}
+
+	if !isValidTransition(cs.Status, StatusError) {
+		return &ErrInvalidStateTransition{From: cs.Status, To: StatusError}
 	}
 
 	cs.Error = errMsg
@@ -195,7 +181,6 @@ func (sm *StateManager) SetError(id string, errMsg string) error {
 	return sm.persist(id, cs)
 }
 
-// SetNetwork records the network configuration for a container.
 func (sm *StateManager) SetNetwork(id, ip, gateway, bridge string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -212,7 +197,6 @@ func (sm *StateManager) SetNetwork(id, ip, gateway, bridge string) error {
 	return sm.persist(id, cs)
 }
 
-// SetCgroupPath records the cgroup path for a container.
 func (sm *StateManager) SetCgroupPath(id, cgroupPath string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -226,7 +210,6 @@ func (sm *StateManager) SetCgroupPath(id, cgroupPath string) error {
 	return sm.persist(id, cs)
 }
 
-// GetState returns a copy of the container state.
 func (sm *StateManager) GetState(id string) (*ContainerState, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -236,12 +219,10 @@ func (sm *StateManager) GetState(id string) (*ContainerState, error) {
 		return nil, err
 	}
 
-	// Return a copy to prevent external mutation
 	copy := *cs
 	return &copy, nil
 }
 
-// ListContainers returns copies of all known container states.
 func (sm *StateManager) ListContainers() ([]*ContainerState, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -254,7 +235,6 @@ func (sm *StateManager) ListContainers() ([]*ContainerState, error) {
 	return result, nil
 }
 
-// RemoveContainer deletes the container state from memory and disk.
 func (sm *StateManager) RemoveContainer(id string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -267,18 +247,17 @@ func (sm *StateManager) RemoveContainer(id string) error {
 
 	containerDir := filepath.Join(sm.stateDir, id)
 	if err := os.RemoveAll(containerDir); err != nil {
-		return fmt.Errorf("failed to remove container state dir: %w", err)
+		return err
 	}
-
 	return nil
 }
 
-// GetStateFile returns the path to a container's state.json file.
 func (sm *StateManager) GetStateFile(id string) string {
 	return filepath.Join(sm.stateDir, id, "state.json")
 }
 
-// get returns the in-memory state for id (must be called with lock held).
+// ─── internal helpers ─────────────────────────────────────────────
+
 func (sm *StateManager) get(id string) (*ContainerState, error) {
 	cs, ok := sm.states[id]
 	if !ok {
@@ -287,36 +266,33 @@ func (sm *StateManager) get(id string) (*ContainerState, error) {
 	return cs, nil
 }
 
-// persist atomically writes the container state to disk.
 func (sm *StateManager) persist(id string, cs *ContainerState) error {
 	stateFile := sm.GetStateFile(id)
 	tmp := stateFile + ".tmp"
 
 	data, err := json.MarshalIndent(cs, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal state: %w", err)
+		return err
 	}
 
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return fmt.Errorf("failed to write state temp file: %w", err)
+		return err
 	}
 
 	if err := os.Rename(tmp, stateFile); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("failed to rename state file: %w", err)
+		_ = os.Remove(tmp)
+		return err
 	}
-
 	return nil
 }
 
-// loadAll reads all container state files from disk into memory.
 func (sm *StateManager) loadAll() error {
 	entries, err := os.ReadDir(sm.stateDir)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("failed to read state dir: %w", err)
+		return err
 	}
 
 	for _, entry := range entries {
@@ -332,18 +308,30 @@ func (sm *StateManager) loadAll() error {
 			continue
 		}
 		if err != nil {
-			log.Printf("[state] warning: could not read state file for %s: %v", id, err)
+			log.Printf("could not read state file %s: %v", id, err)
 			continue
 		}
 
 		var cs ContainerState
 		if err := json.Unmarshal(data, &cs); err != nil {
-			log.Printf("[state] warning: could not parse state file for %s: %v", id, err)
+			log.Printf("could not parse state file %s: %v", id, err)
 			continue
 		}
 
 		sm.states[id] = &cs
 	}
-
 	return nil
+}
+
+func isValidTransition(from, to ContainerStatus) bool {
+	allowed, ok := ValidTransitions[from]
+	if !ok {
+		return false
+	}
+	for _, s := range allowed {
+		if s == to {
+			return true
+		}
+	}
+	return false
 }
