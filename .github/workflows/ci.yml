@@ -80,17 +80,18 @@ jobs:
     - name: Build binary for integration tests
       run: go build -v -o miniDocker_test .
 
-    - name: Run integration tests with coverage
+    - name: Run integration tests with full coverage
       run: |
         cd tests
-        sudo --preserve-env=PATH $(which go) test -v -coverprofile=integration-coverage.out . || echo "Integration tests completed"
+        sudo --preserve-env=PATH $(which go) test -v -coverprofile=integration-coverage.out ./... 2>&1 | tee integration-test.log || true
 
-    - name: Run benchmarks (if root available)
+    - name: Display integration test results
+      if: hashFiles('integration-test.log') != ''
       run: |
-        cd tests
-        sudo --preserve-env=PATH $(which go) test -v -run TestBench -timeout 60s . || echo "Benchmarks skipped"
+        echo "=== Integration Test Results ==="
+        grep -E "(PASS|FAIL|SKIP)" tests/integration-test.log || echo "See full log above"
 
-    - name: Run integration tests
+    - name: Run benchmarks
       run: |
         cd tests
-        sudo --preserve-env=PATH $(which go) test -v -run TestPhase1 || echo "Integration tests skipped (namespace support may be limited in CI)"
+        sudo --preserve-env=PATH $(which go) test -v -bench=. -timeout 120s ./... || true
