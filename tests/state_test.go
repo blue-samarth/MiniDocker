@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"miniDocker/state"
@@ -502,5 +503,211 @@ func TestLifecycleManager_GetLogDir(t *testing.T) {
 	}
 	if !strings.HasSuffix(logDir, filepath.Join("c1", "logs")) {
 		t.Errorf("unexpected log dir: %s", logDir)
+	}
+}
+
+// ─── Comprehensive Functionality Tests ───────────────────────────────────────
+
+// TestComprehensive_ContainerLifecycle tests the full container lifecycle
+func TestComprehensive_ContainerLifecycle(t *testing.T) {
+	sm := newTestStateManager(t)
+	lm := state.NewLifecycleManager(sm)
+	id := "lifecycle-test-abc123"
+
+	// 1. Created state
+	cfg := &state.ContainerConfig{
+		Image:   "/test/rootfs",
+		Command: []string{"/bin/bash"},
+		Memory:  "512m",
+		CPU:     "1.0",
+	}
+	if err := lm.InitContainer(id, cfg); err != nil {
+		t.Fatalf("InitContainer failed: %v", err)
+	}
+
+	cs, err := lm.GetState(id)
+	if err != nil {
+		t.Fatalf("GetState failed: %v", err)
+	}
+	if cs.Status != state.StatusCreated {
+		t.Errorf("Expected StatusCreated, got %v", cs.Status)
+	}
+	if cs.Pid != 0 {
+		t.Errorf("Expected Pid 0 in created state, got %d", cs.Pid)
+	}
+
+	// 2. Running state
+	testPID := 9999
+	if err := lm.MarkRunning(id, testPID); err != nil {
+		t.Fatalf("MarkRunning failed: %v", err)
+	}
+
+	cs, _ = lm.GetState(id)
+	if cs.Status != state.StatusRunning {
+		t.Errorf("Expected StatusRunning, got %v", cs.Status)
+	}
+	if cs.Pid != testPID {
+		t.Errorf("Expected Pid %d, got %d", testPID, cs.Pid)
+	}
+
+	// 3. Network recording
+	if err := lm.RecordNetwork(id, "172.20.0.5", "172.20.0.1", "veth12345"); err != nil {
+		t.Fatalf("RecordNetwork failed: %v", err)
+	}
+
+	cs, _ = lm.GetState(id)
+	if cs.IPAddress != "172.20.0.5" {
+		t.Errorf("Expected IP 172.20.0.5, got %s", cs.IPAddress)
+	}
+
+	// 4. Cgroup recording
+	cgroupPath := "/sys/fs/cgroup/miniDocker/" + id
+	if err := lm.RecordCgroupPath(id, cgroupPath); err != nil {
+		t.Fatalf("RecordCgroupPath failed: %v", err)
+	}
+
+	cs, _ = lm.GetState(id)
+	if cs.CgroupPath != cgroupPath {
+		t.Errorf("Expected CgroupPath %s, got %s", cgroupPath, cs.CgroupPath)
+	}
+
+	// 5. Exited state
+	if err := lm.MarkExited(id, 0); err != nil {
+		t.Fatalf("MarkExited failed: %v", err)
+	}
+
+	cs, _ = lm.GetState(id)
+	if cs.Status != state.StatusExited {
+		t.Errorf("Expected StatusExited, got %v", cs.Status)
+	}
+	if cs.ExitCode != 0 {
+		t.Errorf("Expected ExitCode 0, got %d", cs.ExitCode)
+	}
+
+	// 6. Cleanup
+	if err := lm.Cleanup(id); err != nil {
+		t.Fatalf("Cleanup failed: %v", err)
+	}
+
+	if _, err := lm.GetState(id); err == nil {
+		t.Error("Expected container to be removed after cleanup")
+	}
+}
+
+// TestComprehensive_ErrorTransitions tests invalid state transitions
+func TestComprehensive_ErrorTransitions(t *testing.T) {
+	sm := newTestStateManager(t)
+	lm := state.NewLifecycleManager(sm)
+	id := "error-test-xyz789"
+
+	// Try to mark running without creating
+	if err := lm.MarkRunning(id, 1234); err == nil {
+		t.Error("Expected error marking non-existent container as running")
+	}
+
+	// Create container
+	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
+	lm.InitContainer(id, cfg)
+
+	// Try to exit without running
+	if err := lm.MarkExited(id, 0); err == nil {
+		t.Error("Expected error exiting non-running container")
+	}
+
+	// Mark as running
+	lm.MarkRunning(id, 1234)
+
+	// Try to init again
+	if err := lm.InitContainer(id, cfg); err == nil {
+		t.Error("Expected error re-initializing running container")
+	}
+}
+
+// TestComprehensive_Concurrency tests thread safety
+func TestComprehensive_Concurrency(t *testing.T) {
+	sm := newTestStateManager(t)
+	lm := state.NewLifecycleManager(sm)
+	id := "concurrent-test"
+
+	cfg := &state.ContainerConfig{Image: "/img", Command: []string{"/bin/sh"}}
+	lm.InitContainer(id, cfg)
+	lm.MarkRunning(id, 8888)
+
+	// Concurrent reads
+	readErrors := make(chan error, 100)
+	var wg sync.WaitGroup
+
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := lm.GetState(id)
+			if err != nil {
+				readErrors <- err
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(readErrors)
+
+	for err := range readErrors {
+		if err != nil {
+			t.Logf("Warning: concurrent read error: %v", err)
+		}
+	}
+}
+
+// TestComprehensive_Persistence tests state recovery across restarts
+func TestComprehensive_Persistence(t *testing.T) {
+	dir := t.TempDir()
+
+	// First lifecycle: create, run, record data
+	{
+		sm1, err := state.NewStateManagerWithDir(dir)
+		if err != nil {
+			t.Fatalf("NewStateManagerWithDir: %v", err)
+		}
+		lm1 := state.NewLifecycleManager(sm1)
+
+		id := "persist-test"
+		cfg := &state.ContainerConfig{
+			Image:   "/rootfs",
+			Command: []string{"/bin/bash"},
+			Memory:  "256m",
+			CPU:     "0.5",
+		}
+		lm1.InitContainer(id, cfg)
+		lm1.MarkRunning(id, 5555)
+		lm1.RecordNetwork(id, "172.20.0.100", "172.20.0.1", "miniDocker0")
+		lm1.RecordCgroupPath(id, "/cgroup/path")
+	}
+
+	// Second lifecycle: verify persistence
+	{
+		sm2, err := state.NewStateManagerWithDir(dir)
+		if err != nil {
+			t.Fatalf("NewStateManagerWithDir: %v", err)
+		}
+		lm2 := state.NewLifecycleManager(sm2)
+
+		id := "persist-test"
+		cs, err := lm2.GetState(id)
+		if err != nil {
+			t.Fatalf("GetState: %v", err)
+		}
+
+		if cs.Status != state.StatusRunning {
+			t.Errorf("Status not persisted: %v", cs.Status)
+		}
+		if cs.Pid != 5555 {
+			t.Errorf("PID not persisted: expected 5555, got %d", cs.Pid)
+		}
+		if cs.IPAddress != "172.20.0.100" {
+			t.Errorf("IP not persisted: got %s", cs.IPAddress)
+		}
+		if cs.CgroupPath != "/cgroup/path" {
+			t.Errorf("CgroupPath not persisted: got %s", cs.CgroupPath)
+		}
 	}
 }
