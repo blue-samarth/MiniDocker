@@ -148,6 +148,10 @@ func (sm *StateManager) SetExit(id string, exitCode int) error {
 		return err
 	}
 
+	if !isValidTransition(cs.Status, StatusExited) {
+		return &ErrInvalidStateTransition{From: cs.Status, To: StatusExited}
+	}
+
 	cs.ExitCode = exitCode
 	cs.FinishedAt = time.Now()
 	cs.Status = StatusExited
@@ -163,6 +167,10 @@ func (sm *StateManager) SetError(id string, errMsg string) error {
 	cs, err := sm.get(id)
 	if err != nil {
 		return err
+	}
+
+	if !isValidTransition(cs.Status, StatusError) {
+		return &ErrInvalidStateTransition{From: cs.Status, To: StatusError}
 	}
 
 	cs.Error = errMsg
