@@ -1,11 +1,10 @@
-//go:build linux
-
 package container
 
 import (
 	"fmt"
 	"log"
 	"miniDocker/fs"
+	"miniDocker/network"
 	"os"
 	"path/filepath"
 
@@ -62,12 +61,27 @@ func RunContainerInitProcess(args []string) error {
 		return fmt.Errorf("failed to mount essentials: %w", err)
 	}
 
-	// Set hostname after validation
+	// Set hostname
 	hostname := "container"
 	log.Printf("[init] setting hostname to %q", hostname)
 	if err := unix.Sethostname([]byte(hostname)); err != nil {
 		log.Printf("[init] failed to set hostname: %v", err)
 		return err
+	}
+
+	// Configure container networking if IP was allocated
+	containerIP := os.Getenv("CONTAINER_IP")
+	gateway := os.Getenv("CONTAINER_GATEWAY")
+	veth := os.Getenv("CONTAINER_VETH")
+
+	if containerIP != "" && gateway != "" && veth != "" {
+		log.Printf("[init] configuring network: ip=%s gateway=%s iface=%s", containerIP, gateway, veth)
+		if err := network.ConfigureContainerNetwork(containerIP, gateway, veth); err != nil {
+			// Non-fatal — container can still run without networking
+			log.Printf("[init] warning: failed to configure network: %v", err)
+		}
+	} else {
+		log.Printf("[init] no network configuration provided, skipping")
 	}
 
 	cmd := args[0]
