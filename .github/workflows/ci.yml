@@ -28,22 +28,15 @@ jobs:
     - name: Display coverage report
       if: hashFiles('coverage.out') != ''
       run: |
-        if [ -s coverage.out ]; then
-          echo "=== Coverage Summary ==="
-          go tool cover -func=coverage.out | tail -1
-          echo ""
-          echo "=== Coverage by Package ==="
-          go tool cover -func=coverage.out | grep -E "^miniDocker" | awk '{printf "%-40s %6.1f%%\n", $1, $3}' | sort
-        else
-          echo "Coverage data not available (likely due to short test mode)"
-        fi
+        echo "=== Coverage Summary ==="
+        go tool cover -func=coverage.out | tail -1
+        echo ""
+        echo "=== Coverage by Package ==="
+        go tool cover -func=coverage.out | grep -E "^miniDocker" | awk '{printf "%-40s %6.1f%%\n", $1, $3}' | sort
 
     - name: Generate HTML coverage report
       if: hashFiles('coverage.out') != ''
-      run: |
-        if [ -s coverage.out ]; then
-          go tool cover -html=coverage.out -o coverage.html
-        fi
+      run: go tool cover -html=coverage.out -o coverage.html
 
     - name: Upload coverage artifact
       if: hashFiles('coverage.html') != ''
@@ -54,12 +47,10 @@ jobs:
         retention-days: 30
 
     - name: Comment coverage on PR
-      if: github.event_name == 'pull_request' && hashFiles('coverage.out') != ''
+      if: github.event_name == 'pull_request'
       run: |
-        if [ -s coverage.out ]; then
-          COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')
-          echo "📊 **Test Coverage: ${COVERAGE}**" >> $GITHUB_STEP_SUMMARY
-        fi
+        COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')
+        echo " **Test Coverage: ${COVERAGE}**" >> $GITHUB_STEP_SUMMARY
 
     - name: Build binary
       run: go build -v -o miniDocker .
