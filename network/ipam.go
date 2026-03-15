@@ -25,12 +25,23 @@ type IPAM struct {
 	statePath string
 }
 
-// NewIPAM creates a new IPAM manager, loading any persisted state.
+// NewIPAM creates a new IPAM manager using the default state path,
+// loading any persisted state.
 func NewIPAM(subnet string) *IPAM {
+	return newIPAM(subnet, ipamStatePath)
+}
+
+// NewIPAMWithStatePath creates a new IPAM manager with a custom state path.
+// Useful for testing without requiring root privileges.
+func NewIPAMWithStatePath(subnet, statePath string) *IPAM {
+	return newIPAM(subnet, statePath)
+}
+
+func newIPAM(subnet, statePath string) *IPAM {
 	ipam := &IPAM{
 		Subnet:    subnet,
 		Allocated: make(map[string]string),
-		statePath: ipamStatePath,
+		statePath: statePath,
 	}
 	if err := ipam.load(); err != nil {
 		log.Printf("[ipam] warning: could not load state: %v", err)

@@ -2,14 +2,24 @@ package tests
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"miniDocker/network"
 )
 
+// newTestIPAM creates an IPAM instance using a temp directory,
+// so tests don't require root privileges.
+func newTestIPAM(t *testing.T, subnet string) *network.IPAM {
+	t.Helper()
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "ipam.json")
+	return network.NewIPAMWithStatePath(subnet, statePath)
+}
+
 func TestIPAM_NewIPAM(t *testing.T) {
 	subnet := "172.20.0.0/16"
-	ipam := network.NewIPAM(subnet)
+	ipam := newTestIPAM(t, subnet)
 
 	if ipam == nil {
 		t.Fatal("NewIPAM returned nil")
@@ -23,9 +33,8 @@ func TestIPAM_NewIPAM(t *testing.T) {
 }
 
 func TestIPAM_AllocateSequential(t *testing.T) {
-	ipam := network.NewIPAM("172.20.0.0/16")
+	ipam := newTestIPAM(t, "172.20.0.0/16")
 
-	// First allocation
 	ip1, err := ipam.Allocate("container-1")
 	if err != nil {
 		t.Fatalf("first allocation failed: %v", err)
@@ -34,7 +43,6 @@ func TestIPAM_AllocateSequential(t *testing.T) {
 		t.Errorf("expected first IP to be 172.20.0.2, got %s", ip1)
 	}
 
-	// Second allocation
 	ip2, err := ipam.Allocate("container-2")
 	if err != nil {
 		t.Fatalf("second allocation failed: %v", err)
@@ -43,7 +51,6 @@ func TestIPAM_AllocateSequential(t *testing.T) {
 		t.Errorf("expected second IP to be 172.20.0.3, got %s", ip2)
 	}
 
-	// Verify both in list
 	list := ipam.List()
 	if len(list) != 2 {
 		t.Errorf("expected 2 allocations, got %d", len(list))
@@ -57,7 +64,7 @@ func TestIPAM_AllocateSequential(t *testing.T) {
 }
 
 func TestIPAM_AllocateUniqueness(t *testing.T) {
-	ipam := network.NewIPAM("172.20.0.0/16")
+	ipam := newTestIPAM(t, "172.20.0.0/16")
 
 	ips := make(map[string]bool)
 	for i := 0; i < 10; i++ {
@@ -66,7 +73,6 @@ func TestIPAM_AllocateUniqueness(t *testing.T) {
 		if err != nil {
 			t.Fatalf("allocation %d failed: %v", i, err)
 		}
-
 		if ips[ip] {
 			t.Errorf("IP %s already allocated", ip)
 		}
@@ -79,9 +85,8 @@ func TestIPAM_AllocateUniqueness(t *testing.T) {
 }
 
 func TestIPAM_Release(t *testing.T) {
-	ipam := network.NewIPAM("172.20.0.0/16")
+	ipam := newTestIPAM(t, "172.20.0.0/16")
 
-	// Allocate
 	ip1, err := ipam.Allocate("container-1")
 	if err != nil {
 		t.Fatalf("allocation failed: %v", err)
@@ -91,17 +96,15 @@ func TestIPAM_Release(t *testing.T) {
 		t.Fatalf("allocation failed: %v", err)
 	}
 
-	list := ipam.List()
-	if len(list) != 2 {
+	if len(ipam.List()) != 2 {
 		t.Fatalf("expected 2 allocations before release")
 	}
 
-	// Release first IP
 	if err := ipam.Release(ip1); err != nil {
 		t.Fatalf("release failed: %v", err)
 	}
 
-	list = ipam.List()
+	list := ipam.List()
 	if len(list) != 1 {
 		t.Errorf("expected 1 allocation after release, got %d", len(list))
 	}
@@ -112,7 +115,7 @@ func TestIPAM_Release(t *testing.T) {
 		t.Errorf("IP %s should still be allocated", ip2)
 	}
 
-	// Allocate again - should reuse released IP
+	// Allocate again — should reuse released IP
 	ip3, err := ipam.Allocate("container-3")
 	if err != nil {
 		t.Fatalf("allocation after release failed: %v", err)
@@ -123,9 +126,8 @@ func TestIPAM_Release(t *testing.T) {
 }
 
 func TestIPAM_ReleaseNonexistent(t *testing.T) {
-	ipam := network.NewIPAM("172.20.0.0/16")
+	ipam := newTestIPAM(t, "172.20.0.0/16")
 
-	// Release non-existent IP - should not error
 	err := ipam.Release("172.20.0.2")
 	if err != nil {
 		t.Errorf("release of non-existent IP should not error, got %v", err)
@@ -133,9 +135,8 @@ func TestIPAM_ReleaseNonexistent(t *testing.T) {
 }
 
 func TestIPAM_SkipsGateway(t *testing.T) {
-	ipam := network.NewIPAM("172.20.0.0/16")
+	ipam := newTestIPAM(t, "172.20.0.0/16")
 
-	// Allocate multiple IPs
 	for i := 0; i < 5; i++ {
 		ip, err := ipam.Allocate("container-" + string(rune('a'+i)))
 		if err != nil {
@@ -148,15 +149,11 @@ func TestIPAM_SkipsGateway(t *testing.T) {
 }
 
 func TestIPAM_Persistence(t *testing.T) {
-	if os.Getuid() != 0 {
-		t.Skip("requires root privileges - run with: sudo go test")
-	}
-
-	statePath := "/var/run/miniDocker/ipam_test.json"
-	defer os.Remove(statePath)
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "ipam.json")
 
 	// Create IPAM and allocate
-	ipam1 := network.NewIPAM("172.20.0.0/16")
+	ipam1 := network.NewIPAMWithStatePath("172.20.0.0/16", statePath)
 	ip1, err := ipam1.Allocate("container-1")
 	if err != nil {
 		t.Fatalf("allocation failed: %v", err)
@@ -166,8 +163,8 @@ func TestIPAM_Persistence(t *testing.T) {
 		t.Fatalf("allocation failed: %v", err)
 	}
 
-	// Create new IPAM instance and verify state loaded
-	ipam2 := network.NewIPAM("172.20.0.0/16")
+	// Create new IPAM instance pointing to same state file — verify reload
+	ipam2 := network.NewIPAMWithStatePath("172.20.0.0/16", statePath)
 	list := ipam2.List()
 
 	if len(list) != 2 {
@@ -182,20 +179,18 @@ func TestIPAM_Persistence(t *testing.T) {
 }
 
 func TestIPAM_List(t *testing.T) {
-	ipam := network.NewIPAM("172.20.0.0/16")
+	ipam := newTestIPAM(t, "172.20.0.0/16")
 
 	ip1, _ := ipam.Allocate("container-1")
 	_, _ = ipam.Allocate("container-2")
 
 	list := ipam.List()
-
 	if len(list) != 2 {
 		t.Errorf("expected 2 entries in list, got %d", len(list))
 	}
 
-	// Verify it's a copy (modifying it doesn't affect IPAM)
+	// Verify it's a copy — modifying it doesn't affect IPAM
 	list[ip1] = "modified"
-
 	list2 := ipam.List()
 	if list2[ip1] != "container-1" {
 		t.Errorf("modifying list copy should not affect IPAM state")
@@ -203,7 +198,7 @@ func TestIPAM_List(t *testing.T) {
 }
 
 func TestIPAM_InvalidSubnet(t *testing.T) {
-	ipam := network.NewIPAM("invalid-subnet")
+	ipam := newTestIPAM(t, "invalid-subnet")
 
 	_, err := ipam.Allocate("container-1")
 	if err == nil {
@@ -212,11 +207,8 @@ func TestIPAM_InvalidSubnet(t *testing.T) {
 }
 
 func TestIPAM_SubnetExhaustion(t *testing.T) {
-	// Use a small subnet to test exhaustion
-	ipam := network.NewIPAM("172.20.0.0/30")
-
-	// /30 has only 4 IPs total: .0 (network), .1 (gateway), .2, .3
-	// Only .2 and .3 are usable
+	// /30 has 4 IPs: .0 (network), .1 (gateway), .2, .3 — only .2 and .3 usable
+	ipam := newTestIPAM(t, "172.20.0.0/30")
 
 	ip1, err := ipam.Allocate("container-1")
 	if err != nil {
@@ -243,7 +235,6 @@ func TestIPAM_SubnetExhaustion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocation after release failed: %v", err)
 	}
-
 	if ip3 != ip1 {
 		t.Errorf("expected to reuse released IP %s, got %s", ip1, ip3)
 	}
@@ -254,12 +245,11 @@ func TestIPAM_ConcurrentAllocation(t *testing.T) {
 		t.Skip("skipping concurrent test in short mode")
 	}
 
-	ipam := network.NewIPAM("172.20.0.0/16")
+	ipam := newTestIPAM(t, "172.20.0.0/16")
 
 	resultCh := make(chan string, 10)
 	errorCh := make(chan error, 10)
 
-	// Launch 10 concurrent allocations
 	for i := 0; i < 10; i++ {
 		go func(id int) {
 			ip, err := ipam.Allocate("container-" + string(rune('a'+id)))
@@ -271,7 +261,6 @@ func TestIPAM_ConcurrentAllocation(t *testing.T) {
 		}(i)
 	}
 
-	// Collect results
 	ips := make(map[string]bool)
 	for i := 0; i < 10; i++ {
 		select {
@@ -287,5 +276,21 @@ func TestIPAM_ConcurrentAllocation(t *testing.T) {
 
 	if len(ips) != 10 {
 		t.Errorf("expected 10 unique IPs, got %d", len(ips))
+	}
+}
+
+// Keep the root-only test as a separate explicit skip
+func TestIPAM_RootOnlyPersistence(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root privileges - run with: sudo go test")
+	}
+
+	statePath := "/var/run/miniDocker/ipam_test.json"
+	defer os.Remove(statePath)
+
+	ipam := network.NewIPAMWithStatePath("172.20.0.0/16", statePath)
+	_, err := ipam.Allocate("container-1")
+	if err != nil {
+		t.Fatalf("allocation to /var/run failed: %v", err)
 	}
 }
