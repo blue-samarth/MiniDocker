@@ -416,6 +416,12 @@ func TestPhase7_MultipleContainers(t *testing.T) {
 // ── binary-level integration tests (require root + built binary) ──────────────
 
 func TestPhase7_BinaryHelp(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("requires root")
+	}
+	if testing.Short() {
+		t.Skip("short mode")
+	}
 	buildBinary(t)
 	out, _ := exec.Command("../miniDocker_test", "help").CombinedOutput()
 	for _, word := range []string{"run", "ps", "logs", "stop", "rm", "inspect", "stats"} {
