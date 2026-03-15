@@ -9,7 +9,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"syscall"
+
+	"miniDocker/cgroups"
 
 	"golang.org/x/sys/unix"
 )
@@ -24,7 +25,7 @@ func generateContainerID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func RunContainer(args []string) error {
+func RunContainer(args []string, cgroupCfg ...cgroups.CgroupConfig) error {
 	if len(args) < 2 {
 		log.Printf("[run] usage: run <image-path> <command> [args...]")
 		return fmt.Errorf("insufficient arguments: %v", args)
@@ -52,12 +53,27 @@ func RunContainer(args []string) error {
 
 	log.Printf("[run] container id: %s", containerID)
 	log.Printf("[run] container root: %s", containerDir)
+
+	// Resolve optional cgroup config
+	var cgCfg *cgroups.CgroupConfig
+	if len(cgroupCfg) > 0 {
+		c := cgroupCfg[0]
+		c.ContainerID = containerID
+		cgCfg = &c
+	}
+
 	defer func() {
-		if err := unix.Unmount(mergedDir, unix.MNT_DETACH); err != nil && err != unix.EINVAL && err != unix.ENOENT {
+		if err := unix.Unmount(mergedDir, unix.MNT_DETACH); err != nil &&
+			err != unix.EINVAL && err != unix.ENOENT {
 			log.Printf("[run] warning: failed to unmount merged dir %q: %v", mergedDir, err)
 		}
 		if err := os.RemoveAll(containerDir); err != nil {
 			log.Printf("[run] warning: failed to remove container dir %q: %v", containerDir, err)
+		}
+		if cgCfg != nil {
+			if err := cgCfg.Cleanup(); err != nil {
+				log.Printf("[run] warning: failed to cleanup cgroups: %v", err)
+			}
 		}
 	}()
 
@@ -73,27 +89,29 @@ func RunContainer(args []string) error {
 		"CONTAINER_MERGED="+mergedDir,
 	)
 
-	cmd.SysProcAttr = &syscall.SysProcAttr{
+	// unix.SysProcAttr provides namespace flags and UID/GID mappings.
+	// unix.CLONE_NEW* constants are used for namespace creation.
+	// UidMappings and GidMappings are required for proper user namespace isolation.
+	cmd.SysProcAttr = &unix.SysProcAttr{
 		Cloneflags: unix.CLONE_NEWUTS |
 			unix.CLONE_NEWPID |
 			unix.CLONE_NEWNS |
 			unix.CLONE_NEWNET |
 			unix.CLONE_NEWIPC |
 			unix.CLONE_NEWUSER,
-		UidMappings: []syscall.SysProcIDMap{
+		UidMappings: []unix.SysProcIDMap{
 			{ContainerID: 0, HostID: os.Getuid(), Size: 1},
 		},
-		GidMappings: []syscall.SysProcIDMap{
+		GidMappings: []unix.SysProcIDMap{
 			{ContainerID: 0, HostID: os.Getgid(), Size: 1},
 		},
 		GidMappingsEnableSetgroups: false,
-		// Setpgid puts the child in its own process group (PGID = child PID).
-		Setpgid: true,
-		// Kill container if parent dies unexpectedly.
-		Pdeathsig: unix.SIGKILL,
+		Setpgid:                    true,
 	}
 
-	// Set up signal forwarding BEFORE starting the container to avoid dropping signals
+	// Set up signal forwarding BEFORE starting the container.
+	// unix.SIGINT etc are used here as they satisfy os.Signal and
+	// can be type-asserted to unix.Signal for unix.Kill.
 	sigCh := make(chan os.Signal, 8)
 	signal.Notify(sigCh,
 		unix.SIGINT,
@@ -113,10 +131,10 @@ func RunContainer(args []string) error {
 				continue
 			}
 			log.Printf("[run] forwarding signal %v to container", sig)
-			// With Setpgid=true the child's PGID == child's PID,
-			// so Kill(-childPID) signals the entire container process group.
+			// With Setpgid=true the child's PGID == child's PID.
+			// unix.Kill is used as it accepts unix.Signal type directly.
 			if err := unix.Kill(-cmd.Process.Pid, sig.(unix.Signal)); err != nil {
-				log.Printf("[run] process group signal failed, falling back to direct: %v", err)
+				log.Printf("[run] process group signal failed, falling back: %v", err)
 				if err := cmd.Process.Signal(sig); err != nil {
 					log.Printf("[run] failed to forward signal %v: %v", sig, err)
 				}
@@ -133,6 +151,13 @@ func RunContainer(args []string) error {
 		return err
 	}
 	log.Printf("[run] container PID on host: %d", cmd.Process.Pid)
+
+	// Setup cgroups after process starts
+	if cgCfg != nil && (cgCfg.Memory != "" || cgCfg.CPU != "" || cgCfg.PIDs > 0 || cgCfg.CPUWeight > 0 || cgCfg.SwapMemory != "") {
+		if _, err := cgCfg.Setup(cmd.Process.Pid); err != nil {
+			log.Printf("[run] warning: failed to setup cgroups: %v", err)
+		}
+	}
 
 	waitErr := cmd.Wait()
 
