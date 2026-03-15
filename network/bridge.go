@@ -14,7 +14,6 @@ import (
 const (
 	BridgeName = "miniDocker0"
 	BridgeCIDR = "172.20.0.1/16"
-	Subnet     = "172.20.0.0/16" // used in iptables rules
 )
 
 func CreateBridge() error {
