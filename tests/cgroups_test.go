@@ -163,14 +163,13 @@ func TestParseMemory_ValidFormats(t *testing.T) {
 	}{
 		{"256m", 256 * 1024 * 1024},
 		{"1g", 1024 * 1024 * 1024},
-		{"512k", 512 * 1024},
-		{"1024b", 1024},
-		{"1024", 1024}, // bytes by default
+		{"512m", 512 * 1024 * 1024}, // was 512k — below 4MiB minimum
+		{"8m", 8 * 1024 * 1024},     // was 1024b — below 4MiB minimum
+		{"4m", 4 * 1024 * 1024},     // was 1024 (raw bytes) — below 4MiB minimum
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			// Access via config validation which uses parseMemory internally
 			cfg := cgroups.CgroupConfig{
 				ContainerID: "test",
 				Memory:      tt.input,
@@ -216,7 +215,6 @@ func TestCgroupConfig_Reset(t *testing.T) {
 		CPU:         "0.5",
 	}
 
-	// Validate config first
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("config validation failed: %v", err)
 	}

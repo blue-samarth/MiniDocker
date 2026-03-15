@@ -27,7 +27,7 @@ func TestPhase3_CgroupValidation_Memory(t *testing.T) {
 	}{
 		{"256 MB", "256m", false},
 		{"1 GB", "1g", false},
-		{"512 KB", "512k", false},
+		{"512 MB", "512m", false}, // was "512k" — 512 KiB is below the 4MiB minimum
 		{"invalid", "invalid", true},
 		{"below minimum", "1m", true},
 	}
@@ -156,7 +156,6 @@ func TestPhase3_CgroupConfig_Path(t *testing.T) {
 
 	path := cfg.Path()
 
-	// Verify path structure
 	if !contains(path, "/sys/fs/cgroup") {
 		t.Errorf("path should contain /sys/fs/cgroup, got %q", path)
 	}
@@ -173,7 +172,6 @@ func TestPhase3_CgroupConfig_EmptyConfig(t *testing.T) {
 		ContainerID: "test",
 	}
 
-	// Empty cgroup config should be valid (no limits)
 	err := cfg.Validate()
 	if err != nil {
 		t.Errorf("empty config should be valid, got error: %v", err)
