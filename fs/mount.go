@@ -35,11 +35,12 @@ func PivotRoot(newRoot string) error {
 		return err
 	}
 
-	if err := unix.Unmount(putOld, unix.MNT_DETACH); err != nil {
+	// After pivot, the old root lives at /put_old, not at its pre-pivot host path
+	if err := unix.Unmount("/put_old", unix.MNT_DETACH); err != nil {
 		return err
 	}
 
-	return os.Remove(putOld)
+	return os.Remove("/put_old")
 }
 
 type Mount struct {
