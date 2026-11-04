@@ -84,7 +84,8 @@ var allowedSyscalls = []uint32{
 	unix.SYS_SENDMMSG, unix.SYS_GETCPU, unix.SYS_GETRANDOM,
 	unix.SYS_MEMFD_CREATE, unix.SYS_EXECVEAT, unix.SYS_COPY_FILE_RANGE,
 	unix.SYS_PREADV2, unix.SYS_PWRITEV2, unix.SYS_STATX,
-	// SYS_CLONE3 removed: without argument filtering, can enable features container shouldn't use
+	// SYS_CLONE3 removed: without argument filtering, can enable features container shouldn't use.
+	// Denied with ENOSYS (not EPERM) in ApplySeccompFilter so glibc falls back to clone().
 	// unix.SYS_CLONE3,
 	unix.SYS_PIDFD_OPEN, unix.SYS_CLOSE_RANGE,
 	unix.SYS_OPENAT2, unix.SYS_FACCESSAT2,
@@ -93,6 +94,23 @@ var allowedSyscalls = []uint32{
 func ApplySeccompFilter() error {
 	log.Printf("[security] applying seccomp filter (%d syscalls allowed)", len(allowedSyscalls))
 
+	filter := BuildSeccompFilter()
+
+	prog := unix.SockFprog{
+		Len:    uint16(len(filter)),
+		Filter: &filter[0],
+	}
+
+	return unix.Prctl(unix.PR_SET_SECCOMP,
+		unix.SECCOMP_MODE_FILTER,
+		uintptr(unsafe.Pointer(&prog)),
+		0, 0,
+	)
+}
+
+// BuildSeccompFilter returns the BPF program ApplySeccompFilter installs.
+// Exported so tests can evaluate it without loading it into the kernel.
+func BuildSeccompFilter() []unix.SockFilter {
 	const arch = unix.AUDIT_ARCH_X86_64
 
 	filter := []unix.SockFilter{
@@ -102,6 +120,10 @@ func ApplySeccompFilter() error {
 		bpfStmt(unix.BPF_RET|unix.BPF_K, unix.SECCOMP_RET_KILL_PROCESS),
 		// Load syscall nr
 		bpfStmt(unix.BPF_LD|unix.BPF_W|unix.BPF_ABS, 0),
+		// clone3: deny, but as ENOSYS so libc falls back to clone()
+		bpfJump(unix.BPF_JMP|unix.BPF_JEQ|unix.BPF_K, unix.SYS_CLONE3, 0, 1),
+		bpfStmt(unix.BPF_RET|unix.BPF_K,
+			unix.SECCOMP_RET_ERRNO|(uint32(unix.ENOSYS)&0x0000ffff)),
 	}
 
 	// One jump + allow per syscall
@@ -113,19 +135,8 @@ func ApplySeccompFilter() error {
 	}
 
 	// Default deny
-	filter = append(filter,
+	return append(filter,
 		bpfStmt(unix.BPF_RET|unix.BPF_K, unix.SECCOMP_RET_ERRNO|(uint32(unix.EPERM)&0x0000ffff)),
-	)
-
-	prog := unix.SockFprog{
-		Len:    uint16(len(filter)),
-		Filter: &filter[0],
-	}
-
-	return unix.Prctl(unix.PR_SET_SECCOMP,
-		unix.SECCOMP_MODE_FILTER,
-		uintptr(unsafe.Pointer(&prog)),
-		0, 0,
 	)
 }
 
